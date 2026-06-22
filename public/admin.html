@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finance API — Admin Panel</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh;line-height:1.5}
+.container{max-width:1200px;margin:0 auto;padding:24px}
+h1{font-size:22px;margin-bottom:6px}
+.subtitle{color:#94a3b8;margin-bottom:24px;font-size:13px}
+.login-box{max-width:360px;margin:80px auto;background:#1e2130;border-radius:12px;padding:32px;border:1px solid #2d3748}
+.login-box h2{margin-bottom:24px;text-align:center}
+.login-box input{width:100%;padding:10px 14px;margin-bottom:12px;background:#0f1117;border:1px solid #374151;border-radius:8px;color:#e2e8f0;font-size:14px}
+.login-box input:focus{outline:none;border-color:#6366f1}
+.login-box button{width:100%;padding:10px;background:#6366f1;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;font-weight:600}
+.login-box button:hover{background:#4f46e5}
+.error{color:#f87171;font-size:13px;margin-top:8px;text-align:center;min-height:18px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:#1e2130;border-radius:12px;padding:20px;border:1px solid #2d3748}
+.stat-card .value{font-size:28px;font-weight:700;color:#818cf8}
+.stat-card .label{font-size:12px;color:#94a3b8;margin-top:4px}
+.tabs{display:flex;gap:4px;margin-bottom:24px;border-bottom:1px solid #2d3748}
+.tab{padding:10px 20px;cursor:pointer;border:none;background:none;color:#94a3b8;font-size:14px;border-bottom:2px solid transparent;transition:all .2s}
+.tab:hover{color:#e2e8f0}
+.tab.active{color:#818cf8;border-bottom-color:#818cf8}
+.panel{display:none}
+.panel.active{display:block}
+table{width:100%;border-collapse:collapse;background:#1e2130;border-radius:12px;overflow:hidden;border:1px solid #2d3748}
+th{text-align:left;padding:10px 14px;background:#252a3a;color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+th:first-child{border-radius:8px 0 0 8px}th:last-child{border-radius:0 8px 8px 0}
+td{padding:10px 14px;border-top:1px solid #2d3748;font-size:13px;vertical-align:middle}
+tr:hover td{background:#252a3a}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.badge-admin{background:#4c1d95;color:#c4b5fd}
+.badge-user{background:#1e3a5f;color:#93c5fd}
+.badge-owner{background:#14532d;color:#86efac}
+.badge-member{background:#3f3f46;color:#d4d4d8}
+.btn{padding:6px 12px;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600;transition:opacity .2s;margin:2px}
+.btn:hover{opacity:.85}
+.btn-danger{background:#991b1b;color:#fca5a5}
+.btn-success{background:#14532d;color:#86efac}
+.btn-toggle{background:#1e3a5f;color:#93c5fd}
+.btn-ghost{background:#374151;color:#94a3b8}
+.logout{float:right;padding:6px 14px;background:#374151;color:#e2e8f0;border:none;border-radius:6px;cursor:pointer;font-size:13px}
+.logout:hover{background:#4b5563}
+.empty{text-align:center;padding:40px;color:#64748b;font-size:14px}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
+.form-group{display:flex;flex-direction:column;gap:6px}
+.form-group label{font-size:12px;color:#94a3b8}
+.form-group input,.form-group select{padding:8px 12px;background:#0f1117;border:1px solid #374151;border-radius:6px;color:#e2e8f0;font-size:13px}
+.form-group input:focus,.form-group select:focus{outline:none;border-color:#6366f1}
+.form-actions{display:flex;gap:8px;margin-top:16px}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center;padding:20px}
+.modal-overlay.active{display:flex}
+.modal{background:#1e2130;border:1px solid #2d3748;border-radius:12px;padding:24px;width:100%;max-width:600px;max-height:90vh;overflow-y:auto}
+.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.modal-header h2{font-size:17px}
+.modal-close{cursor:pointer;color:#94a3b8;font-size:22px;padding:4px}
+.modal-close:hover{color:#e2e8f0}
+.member-row{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#252a3a;border-radius:6px;margin-bottom:6px}
+.member-name{flex:1;font-size:13px}
+.toast{position:fixed;bottom:24px;right:24px;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:500;z-index:200;animation:si .3s}
+.toast.ok{background:rgba(34,197,94,.1);color:#4ade80;border:1px solid rgba(34,197,94,.3)}
+.toast.err{background:rgba(239,68,68,.1);color:#f87171;border:1px solid rgba(239,68,68,.3)}
+@keyframes si{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+@media(max-width:768px){
+  .container{padding:12px}
+  h1{font-size:18px}
+  .stats{grid-template-columns:1fr 1fr;gap:10px}
+  .stat-card{padding:14px}
+  .stat-card .value{font-size:22px}
+  .tabs{flex-wrap:wrap}
+  .tab{padding:8px 14px;font-size:13px}
+  table{font-size:12px}
+  th,td{padding:6px 8px}
+  .btn{padding:4px 8px;font-size:11px}
+  .form-grid{grid-template-columns:1fr}
+  .logout{padding:4px 10px;font-size:12px}
+  .modal{padding:16px;max-height:95vh}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+var API=''
+var token=localStorage.getItem('admin_token')
+var currentUser=null
+var usersCache=[]
+
+function el(tag,attrs,children){
+  var e=document.createElement(tag)
+  if(attrs)for(var k in attrs){if(k==='className')e.className=attrs[k];else if(k.substring(0,2)==='on')e[k]=attrs[k];else e.setAttribute(k,attrs[k])}
+  var c=Array.isArray(children)?children:[children]
+  for(var i=0;i<c.length;i++){if(typeof c[i]==='string')e.appendChild(document.createTextNode(c[i]));else if(c[i]!=null)e.appendChild(c[i])}
+  return e
+}
+
+function toast(msg,t){
+  var e=el('div',{className:'toast '+(t||'ok')},msg)
+  document.body.appendChild(e)
+  setTimeout(function(){e.remove()},3000)
+}
+
+function api(path,opts){
+  var h={'Content-Type':'application/json'}
+  if(token)h.Authorization='Bearer '+token
+  return fetch(API+path,Object.assign({},opts,{headers:Object.assign({},h,opts&&opts.headers)})).then(function(r){
+    return r.json().catch(function(){return null}).then(function(d){
+      if(!r.ok)throw new Error(d?d.error:'HTTP '+r.status)
+      return d
+    })
+  })
+}
+
+function modal(title,body){
+  var o=el('div',{className:'modal-overlay active'},
+    el('div',{className:'modal'},[
+      el('div',{className:'modal-header'},[el('h2',{},title),el('span',{className:'modal-close',onclick:function(){o.remove()}},'×')]),
+      body
+    ])
+  )
+  document.body.appendChild(o)
+  return o
+}
+function mclose(){var o=document.querySelector('.modal-overlay.active');if(o)o.remove()}
+
+function render(){
+  var app=document.getElementById('app')
+  app.innerHTML=''
+  if(!token||!currentUser){renderLogin(app);return}
+  if(!currentUser.is_admin){
+    app.appendChild(el('div',{className:'container'},[el('h1',{},'Access Denied'),el('p',{className:'subtitle'},'Admin required')]))
+    return
+  }
+  renderDashboard(app)
+}
+
+function renderLogin(container){
+  container.appendChild(el('div',{className:'login-box'},[
+    el('h2',{},'Admin Login'),
+    el('input',{id:'login-user',placeholder:'Username',type:'text'}),
+    el('input',{id:'login-pass',placeholder:'Password',type:'password'}),
+    el('button',{onclick:doLogin},'Sign In'),
+    el('div',{className:'error',id:'login-error'})
+  ]))
+}
+
+function doLogin(){
+  var u=document.getElementById('login-user').value
+  var p=document.getElementById('login-pass').value
+  document.getElementById('login-error').textContent=''
+  api('api/auth/login',{method:'POST',body:JSON.stringify({username:u,password:p})})
+    .then(function(d){token=d.token;currentUser=d.user;localStorage.setItem('admin_token',token);render()})
+    .catch(function(e){document.getElementById('login-error').textContent=e.message})
+}
+
+function logout(){
+  token=null;currentUser=null;localStorage.removeItem('admin_token');render()
+}
+
+function renderDashboard(container){
+  var c=el('div',{className:'container'},[
+    el('button',{className:'logout',onclick:logout},'Logout'),
+    el('h1',{},'Admin Panel'),
+    el('p',{className:'subtitle'},'Logged in as '+(currentUser?currentUser.username:'')),
+    el('div',{id:'stats',className:'stats'}),
+    el('div',{className:'tabs'},[
+      el('button',{className:'tab active',onclick:function(){switchTab('users')}},'Users'),
+      el('button',{className:'tab',onclick:function(){switchTab('instances')}},'Instances'),
+    ]),
+    el('div',{id:'panel-users',className:'panel active'}),
+    el('div',{id:'panel-instances',className:'panel'})
+  ])
+  container.appendChild(c)
+  loadStats()
+  loadUsers()
+  loadInstances()
+}
+
+function switchTab(name){
+  var tabs=document.querySelectorAll('.tab')
+  for(var i=0;i<tabs.length;i++){
+    var isActive=(name==='users'&&i===0)||(name==='instances'&&i===1)
+    tabs[i].classList.toggle('active',isActive)
+  }
+  document.getElementById('panel-users').classList.toggle('active',name==='users')
+  document.getElementById('panel-instances').classList.toggle('active',name==='instances')
+}
+
+function loadStats(){
+  api('api/admin/stats').then(function(s){
+    var p=document.getElementById('stats')
+    p.innerHTML=''
+    var items=[
+      {v:s.user_count,l:'Users'},
+      {v:s.instance_count,l:'Instances'},
+      {v:s.transaction_count,l:'Transactions'},
+      {v:s.pending_requests,l:'Pending Requests'}
+    ]
+    for(var i=0;i<items.length;i++){
+      p.appendChild(el('div',{className:'stat-card'},[
+        el('div',{className:'value'},String(items[i].v)),
+        el('div',{className:'label'},items[i].l)
+      ]))
+    }
+  }).catch(function(e){console.error(e)})
+}
+
+// ==================== USERS ====================
+function loadUsers(){
+  api('api/admin/users').then(function(users){
+    usersCache=users
+    var p=document.getElementById('panel-users')
+    if(!users.length){p.innerHTML='';p.appendChild(el('div',{className:'empty'},'No users'));return}
+    var rows=[]
+    for(var i=0;i<users.length;i++){
+      var u=users[i]
+      var actions=[el('button',{className:'btn btn-toggle',onclick:(function(x){return function(){toggleAdmin(x)}})(u)},u.is_admin?'Revoke':'Grant')]
+      if(u.id!==currentUser.id)actions.push(el('button',{className:'btn btn-danger',onclick:(function(id){return function(){deleteUser(id)}})(u.id)},'Delete'))
+      rows.push(el('tr',{},[
+        el('td',{},String(u.id)),
+        el('td',{},u.username),
+        el('td',{},el('span',{className:'badge '+(u.is_admin?'badge-admin':'badge-user')},u.is_admin?'admin':'user')),
+        el('td',{},new Date(u.created_at).toLocaleDateString()),
+        el('td',{},actions)
+      ]))
+    }
+    p.innerHTML=''
+    p.appendChild(el('table',{},[
+      el('thead',{},el('tr',{},[el('th',{},'ID'),el('th',{},'Username'),el('th',{},'Role'),el('th',{},'Created'),el('th',{},'Actions')])),
+      el('tbody',{},rows)
+    ]))
+  }).catch(function(e){console.error(e)})
+}
+
+function toggleAdmin(user){
+  api('api/admin/users/'+user.id+'/admin',{method:'PUT',body:JSON.stringify({is_admin:!user.is_admin})})
+    .then(function(){loadUsers();loadStats()})
+    .catch(function(e){alert(e.message)})
+}
+
+function deleteUser(id){
+  if(!confirm('Delete user?'))return
+  api('api/admin/users/'+id,{method:'DELETE'})
+    .then(function(){loadUsers();loadStats()})
+    .catch(function(e){alert(e.message)})
+}
+
+// ==================== INSTANCES ====================
+function loadInstances(){
+  api('api/admin/instances').then(function(instances){
+    var p=document.getElementById('panel-instances')
+    p.innerHTML=''
+    p.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px'},[
+      el('h2',{style:'font-size:16px'},'Instances'),
+      el('button',{className:'btn btn-success',onclick:showCreateInstance},'+ Create')
+    ]))
+    if(!instances.length){p.appendChild(el('div',{className:'empty'},'No instances'));return}
+    var rows=[]
+    for(var i=0;i<instances.length;i++){
+      var inst=instances[i]
+      rows.push(el('tr',{},[
+        el('td',{},String(inst.id)),
+        el('td',{},inst.name),
+        el('td',{},inst.owner),
+        el('td',{},String(inst.member_count)),
+        el('td',{},new Date(inst.created_at).toLocaleDateString()),
+        el('td',{},[
+          el('button',{className:'btn btn-toggle',onclick:(function(x){return function(){showInstanceMembers(x)}})(inst)},'Members'),
+          el('button',{className:'btn btn-ghost',onclick:(function(x){return function(){showEditInstance(x)}})(inst)},'Edit'),
+          el('button',{className:'btn btn-danger',onclick:(function(id){return function(){deleteInstance(id)}})(inst.id)},'Delete')
+        ])
+      ]))
+    }
+    p.appendChild(el('table',{},[
+      el('thead',{},el('tr',{},[el('th',{},'ID'),el('th',{},'Name'),el('th',{},'Owner'),el('th',{},'Members'),el('th',{},'Created'),el('th',{},'Actions')])),
+      el('tbody',{},rows)
+    ]))
+  }).catch(function(e){console.error(e)})
+}
+
+function showCreateInstance(){
+  var userOpts=[]
+  for(var i=0;i<usersCache.length;i++){
+    userOpts.push(el('option',{value:usersCache[i].id},usersCache[i].username))
+  }
+  modal('Create Instance',el('div',{},[
+    el('div',{className:'form-group'},[el('label',{},'Name'),el('input',{id:'ci-name',placeholder:'Instance name'})]),
+    el('div',{className:'form-group'},[el('label',{},'Owner'),el('select',{id:'ci-owner'},userOpts)]),
+    el('div',{className:'form-actions'},[
+      el('button',{className:'btn btn-success',onclick:doCreateInstance},'Create'),
+      el('button',{className:'btn btn-ghost',onclick:mclose},'Cancel')
+    ])
+  ]))
+}
+
+function doCreateInstance(){
+  var name=document.getElementById('ci-name').value
+  var ownerId=parseInt(document.getElementById('ci-owner').value)
+  if(!name)return toast('Enter name','err')
+  api('api/instances',{method:'POST',body:JSON.stringify({name:name,owner_id:ownerId})})
+    .then(function(){mclose();toast('Created');loadInstances();loadStats()})
+    .catch(function(e){toast(e.message,'err')})
+}
+
+function showEditInstance(inst){
+  modal('Edit Instance: '+inst.name,el('div',{},[
+    el('div',{className:'form-group'},[el('label',{},'Name'),el('input',{id:'ei-name',value:inst.name})]),
+    el('div',{className:'form-actions'},[
+      el('button',{className:'btn btn-success',onclick:(function(id){return function(){doEditInstance(id)}})(inst.id)},'Save'),
+      el('button',{className:'btn btn-ghost',onclick:mclose},'Cancel')
+    ])
+  ]))
+}
+
+function doEditInstance(id){
+  var name=document.getElementById('ei-name').value
+  if(!name)return toast('Enter name','err')
+  api('api/admin/instances/'+id,{method:'PUT',body:JSON.stringify({name:name})})
+    .then(function(){mclose();toast('Updated');loadInstances()})
+    .catch(function(e){toast(e.message,'err')})
+}
+
+function deleteInstance(id){
+  if(!confirm('Delete instance and all its data?'))return
+  api('api/admin/instances/'+id,{method:'DELETE'})
+    .then(function(){toast('Deleted');loadInstances();loadStats()})
+    .catch(function(e){toast(e.message,'err')})
+}
+
+function showInstanceMembers(inst){
+  var b=el('div',{},[el('div',{id:'mem-list'}),el('div',{style:'border-top:1px solid #2d3748;margin:16px 0'}),el('div',{id:'add-member'})])
+  modal('Members: '+inst.name,b)
+  loadMembers(inst)
+}
+
+function loadMembers(inst){
+  api('api/instances/'+inst.id+'/members').then(function(members){
+    var ml=document.getElementById('mem-list')
+    ml.innerHTML=''
+    ml.appendChild(el('h3',{style:'font-size:14px;margin-bottom:12px'},'Current Members'))
+    if(!members.length){ml.appendChild(el('div',{className:'empty'},'No members'));return}
+    for(var i=0;i<members.length;i++){
+      var m=members[i]
+      var actions=[]
+      if(m.role!=='owner')actions.push(el('button',{className:'btn btn-danger',onclick:(function(ii,uu){return function(){removeMember(ii,uu)}})(inst.id,m.user_id)},'Remove'))
+      ml.appendChild(el('div',{className:'member-row'},[
+        el('span',{className:'member-name'},m.username),
+        el('span',{className:'badge badge-'+(m.role==='owner'?'owner':'member')},m.role),
+        el('span',{style:'flex:1'}),
+        el('td',{},actions)
+      ]))
+    }
+
+    // Add member form
+    var addDiv=document.getElementById('add-member')
+    addDiv.innerHTML=''
+    addDiv.appendChild(el('h3',{style:'font-size:14px;margin-bottom:12px'},'Add Member'))
+    var userOpts=[]
+    for(var j=0;j<usersCache.length;j++){
+      var alreadyMember=false
+      for(var k=0;k<members.length;k++){
+        if(members[k].user_id===usersCache[j].id){alreadyMember=true;break}
+      }
+      if(!alreadyMember)userOpts.push(el('option',{value:usersCache[j].id},usersCache[j].username))
+    }
+    if(userOpts.length){
+      addDiv.appendChild(el('div',{className:'form-grid'},[
+        el('div',{className:'form-group'},[el('label',{},'User'),el('select',{id:'am-userid'},userOpts)]),
+        el('div',{className:'form-group'},[el('label',{},'Role'),el('select',{id:'am-role'},[
+          el('option',{value:'member'},'Member'),
+          el('option',{value:'owner'},'Owner')
+        ])])
+      ]))
+      addDiv.appendChild(el('div',{className:'form-actions'},[
+        el('button',{className:'btn btn-success',onclick:(function(ii){return function(){addMember(ii)}})(inst.id)},'Add')
+      ]))
+    } else {
+      addDiv.appendChild(el('div',{className:'empty'},'All users are already members'))
+    }
+  }).catch(function(e){toast(e.message,'err')})
+}
+
+function addMember(instId){
+  var userId=parseInt(document.getElementById('am-userid').value)
+  var role=document.getElementById('am-role').value
+  api('api/instances/'+instId+'/members',{method:'POST',body:JSON.stringify({user_id:userId,role:role})})
+    .then(function(){toast('Member added');loadMembers({id:instId});loadInstances()})
+    .catch(function(e){toast(e.message,'err')})
+}
+
+function removeMember(instId,userId){
+  if(!confirm('Remove member?'))return
+  api('api/instances/'+instId+'/members/'+userId,{method:'DELETE'})
+    .then(function(){toast('Member removed');loadMembers({id:instId});loadInstances()})
+    .catch(function(e){toast(e.message,'err')})
+}
+
+// ==================== INIT ====================
+function init(){
+  if(token){
+    api('api/auth/me')
+      .then(function(u){currentUser=u;if(!u.is_admin){token=null;localStorage.removeItem('admin_token')};render()})
+      .catch(function(){token=null;localStorage.removeItem('admin_token');render()})
+  } else {
+    render()
+  }
+}
+init()
+</script>
+</body>
+</html>
