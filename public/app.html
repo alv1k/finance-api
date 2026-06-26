@@ -1863,6 +1863,53 @@ function getCatsByType(type){
   return result
 }
 
+function showPkcAuth(receipt){
+  window._lastQr=receipt._qr||''
+  var qr=window._lastQr
+
+  function tryFetch(cookies){
+    var h={'Content-Type':'application/json'}
+    var token=localStorage.getItem('token')
+    if(token)h.Authorization='Bearer '+token
+    return api('api/instances/'+curInst.id+'/fetch-receipt',{method:'POST',headers:h,body:JSON.stringify({qr_string:qr,cookies:cookies})})
+  }
+
+  var b=el('div',{},[
+    el('div',{style:'margin-bottom:12px'},[
+      el('p',{style:'font-size:13px;color:var(--text2);margin-bottom:8px'},receipt.message),
+      el('button',{className:'primary',style:'width:100%;margin-bottom:12px',onclick:function(){
+        window.open('https://proverkacheka.com/auth','_pkc_login','width=500,height=650')
+        var step2=document.getElementById('pkc-step2')
+        if(step2)step2.style.display='block'
+      }},'🔑 Открыть proverkacheka.com для входа'),
+      el('div',{id:'pkc-step2',style:'display:none'},[
+        el('ol',{style:'font-size:12px;color:var(--text3);padding-left:16px;margin:0'},[
+          el('li',{},'Войдите через Яндекс в открывшемся окне'),
+          el('li',{},'Нажмите F12 → Application → Cookies → '),
+          el('b',{},'https://proverkacheka.com'),
+          el('li',{},'Скопируйте ВСЕ куки (особенно '),
+          el('code',{style:'background:var(--surface2);padding:1px 4px;border-radius:3px;font-size:11px'},'sessionid2'),
+          el('li',{},'Вставьте в поле ниже и нажмите кнопку')
+        ])
+      ])
+    ]),
+    el('textarea',{id:'pkc-cookies',placeholder:'ENGID=1.1; ENGSID=abc; sessionid2=xyz; ...',style:'width:100%;min-height:50px;padding:8px;border:1px solid var(--border);border-radius:var(--rs);font-family:monospace;font-size:11px;resize:vertical'}),
+    el('button',{className:'primary',style:'width:100%;margin-top:8px',onclick:function(){
+      var cookies=document.getElementById('pkc-cookies').value.trim()
+      if(!cookies){toast('Вставьте куки из браузера','err');return}
+      if(window._qrModal)window._qrModal.remove()
+      tryFetch(cookies).then(function(r){
+        if(r.auth_required){toast('❌ Сессия невалидна. Убедитесь что скопировали куки с proverkacheka.com','err');return}
+        onItems(r)
+      }).catch(function(e){toast('❌ '+e.message,'err')})
+    }},'💾 Сохранить и получить чек')
+  ])
+
+  showQrScanner(function(){})
+  if(window._qrModal)window._qrModal.remove()
+  window._qrModal=modal('🔐 Авторизация на proverkacheka.com',b)
+}
+
 function showQrScanner(onItems){
   var qrInput=null
   var statusEl=null
@@ -2022,10 +2069,15 @@ function showQrScanner(onItems){
         btn.textContent='Загрузка...'
         statusEl.textContent='⏳ Получаем данные чека...'
         statusEl.style.color='var(--text3)'
-        api('api/instances/'+curInst.id+'/fetch-receipt',{method:'POST',body:JSON.stringify({qr_string:qr})})
+           api('api/instances/'+curInst.id+'/fetch-receipt',{method:'POST',body:JSON.stringify({qr_string:qr})})
           .then(function(receipt){
             stopCamera()
             if(window._qrModal)window._qrModal.remove()
+            if(receipt.auth_required){
+              window._lastQr=qr
+              showPkcAuth(receipt)
+              return
+            }
             onItems(receipt)
           })
           .catch(function(e){

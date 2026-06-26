@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>PKC Fetcher</title>
+<style>body{font-family:sans-serif;padding:16px;max-width:500px;margin:0 auto}
+input{width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;margin:4px 0;font-family:monospace;font-size:11px}
+button{padding:10px 16px;border:none;border-radius:4px;cursor:pointer;font-size:13px;margin:2px}
+.btn-primary{background:#307AB9;color:#fff;width:100%}
+.btn-copy{background:#6c757d;color:#fff}
+.status{padding:12px;border-radius:4px;margin:8px 0;font-size:12px;background:#f0f0f0;word-break:break-all;max-height:200px;overflow:auto}
+.step{margin:12px 0}
+.step-title{font-weight:600;font-size:14px;margin-bottom:8px}</style>
+</head>
+<body>
+<h3 style="margin-top:0">📷 Получение чека</h3>
+
+<div class="step">
+  <div class="step-title">Шаг 1: Вставьте QR-код</div>
+  <input id="qr-input" type="text" placeholder="t=20220622T1439&s=1510.89&fn=9282...&i=251...&fp=1186...&n=1">
+  <button class="btn-primary" onclick="fetchReceipt()" id="fetch-btn">Получить данные</button>
+</div>
+
+<div class="step" id="step-auth" style="display:none">
+  <div class="step-title">Шаг 2: Авторизация на proverkacheka.com</div>
+  <p style="font-size:12px;color:#666">Откройте <b>proverkacheka.com</b> в новом окне, войдите через Яндекс, затем откройте DevTools (F12) → Application → Cookies → <b>https://proverkacheka.com</b> и скопируйте все куки в поле ниже:</p>
+  <input id="cookies-input" type="text" placeholder="ENGID=1.1; sessionid2=...; Session_id=...">
+  <button class="btn-primary" onclick="submitCookies()">Сохранить сессию и получить чек</button>
+</div>
+
+<div class="step" id="step-result" style="display:none">
+  <div class="step-title">Результат</div>
+  <div class="status" id="result-status"></div>
+  <pre id="result-data" style="font-size:11px;white-space:pre-wrap;word-break:break-all;background:#f5f5f5;padding:8px;border-radius:4px;max-height:300px;overflow:auto"></pre>
+  <button class="btn-primary" onclick="sendToParent()">✅ Использовать данные</button>
+</div>
+
+<script>
+var receiptData=null
+
+function fetchReceipt(){
+  var qr=document.getElementById('qr-input').value.trim()
+  if(!qr){alert('Вставьте QR-строку');return}
+  var params=new URLSearchParams(qr)
+  var fn=params.get('fn'),fd=params.get('i'),fp=params.get('fp'),n=params.get('n'),s=params.get('s'),t=params.get('t')
+  if(!fn||!fd||!fp){alert('Невалидный QR');return}
+  document.getElementById('fetch-btn').disabled=true
+  document.getElementById('fetch-btn').textContent='Запрос...'
+  var body=new URLSearchParams()
+  body.append('fn',fn);body.append('fd',fd);body.append('fp',fp)
+  body.append('n',n||1);body.append('s',s||'');body.append('t',t||'')
+  body.append('qr','1');body.append('token','0.1234');body.append('status','')
+  fetch('https://proverkacheka.com/api/v1/check/get',{
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:body.toString(),
+    credentials:'include'
+  }).then(function(r){return r.json()}).then(function(data){
+    document.getElementById('fetch-btn').disabled=false
+    document.getElementById('fetch-btn').textContent='Получить данные'
+    if(data.code===1&&data.data&&data.data.json){
+      var json=data.data.json
+      var items=[]
+      if(json.items&&Array.isArray(json.items)){
+        for(var i=0;i<json.items.length;i++){
+          items.push({name:json.items[i].name||'',price:(parseFloat(json.items[i].price)||0)/100,quantity:parseFloat(json.items[i].quantity)||1,amount:(parseFloat(json.items[i].sum)||0)/100})
+        }
+      }
+      receiptData={date:parseDate(t),total:parseFloat(s)||0,seller:json.user||'',seller_inn:json.userInn||'',items:items,raw:{fn:fn,fd:fd,fp:fp,n:n,t:t,s:s}}
+      showResult('✅ Чек получен! Продавец: '+(json.user||'—')+', позиций: '+items.length, receiptData)
+    }else{
+      var msg=typeof data.data==='string'?data.data:JSON.stringify(data)
+      if(msg.includes('авторизован')||msg.includes('Unauthorized')||msg.includes('401')){
+        document.getElementById('step-auth').style.display='block'
+        document.getElementById('fetch-btn').textContent='Получить данные (нужна авторизация)'
+      }else{
+        showResult('❌ '+msg, null)
+      }
+    }
+  }).catch(function(e){
+    document.getElementById('fetch-btn').disabled=false
+    document.getElementById('fetch-btn').textContent='Получить данные'
+    if(e.name==='TypeError'){
+      document.getElementById('step-auth').style.display='block'
+    }else{
+      showResult('❌ '+e.message, null)
+    }
+  })
+}
+
+function parseDate(t){
+  if(!t)return new Date().toISOString().slice(0,10)
+  try{var y=t.slice(0,4),m=t.slice(4,6),d=t.slice(6,8);if(y&&m&&d)return y+'-'+m+'-'+d}catch(e){}
+  return new Date().toISOString().slice(0,10)
+}
+
+function showResult(msg, data){
+  document.getElementById('step-result').style.display='block'
+  document.getElementById('result-status').textContent=msg
+  document.getElementById('result-data').textContent=data?JSON.stringify(data,null,2):''
+}
+
+function submitCookies(){
+  var cookies=document.getElementById('cookies-input').value.trim()
+  if(!cookies){alert('Вставьте куки');return}
+  var qr=document.getElementById('qr-input').value.trim()
+  if(!qr){alert('Сначала вставьте QR-код');return}
+  var params=new URLSearchParams(qr)
+  var fn=params.get('fn'),fd=params.get('i'),fp=params.get('fp'),n=params.get('n'),s=params.get('s'),t=params.get('t')
+  var body=new URLSearchParams()
+  body.append('fn',fn);body.append('fd',fd);body.append('fp',fp)
+  body.append('n',n||1);body.append('s',s||'');body.append('t',t||'')
+  body.append('qr','1');body.append('token','0.1234');body.append('status','')
+  fetch('https://proverkacheka.com/api/v1/check/get',{
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded','Cookie':cookies},
+    body:body.toString()
+  }).then(function(r){return r.json()}).then(function(data){
+    if(data.code===1&&data.data&&data.data.json){
+      var json=data.data.json
+      var items=[]
+      if(json.items&&Array.isArray(json.items)){
+        for(var i=0;i<json.items.length;i++){
+          items.push({name:json.items[i].name||'',price:(parseFloat(json.items[i].price)||0)/100,quantity:parseFloat(json.items[i].quantity)||1,amount:(parseFloat(json.items[i].sum)||0)/100})
+        }
+      }
+      receiptData={date:parseDate(t),total:parseFloat(s)||0,seller:json.user||'',seller_inn:json.userInn||'',items:items,raw:{fn:fn,fd:fd,fp:fp,n:n,t:t,s:s}}
+      showResult('✅ Чек получен через куки! Продавец: '+(json.user||'—')+', позиций: '+items.length, receiptData)
+    }else{
+      showResult('❌ '+JSON.stringify(data), null)
+    }
+  }).catch(function(e){showResult('❌ '+e.message, null)})
+}
+
+function sendToParent(){
+  if(!receiptData){alert('Нет данных');return}
+  if(window.opener){window.opener.postMessage({type:'pkc_result',...receiptData},'*')}
+  document.getElementById('result-status').textContent='✅ Отправлено! Закройте окно.'
+}
+
+var qr=new URLSearchParams(location.search).get('qr')
+if(qr)document.getElementById('qr-input').value=decodeURIComponent(qr)
+</script>
+</body></html>

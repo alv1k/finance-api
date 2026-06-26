@@ -17,7 +17,7 @@ services:
     depends_on:
       - db
     environment:
-      DB_HOST: db
+      DB_HOST: 127.0.0.1
       DB_PORT: 5432
       DB_NAME: finance
       DB_USER: finance
@@ -25,8 +25,9 @@ services:
       PORT: 3000
       JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
-    ports:
-      - "127.0.0.1:3000:3000"
+      YANDEX_OAUTH_ID: ${YANDEX_OAUTH_ID}
+      YANDEX_OAUTH_SECRET: ${YANDEX_OAUTH_SECRET}
+    network_mode: "host"
 
 volumes:
   pgdata:

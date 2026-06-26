@@ -5,8 +5,9 @@ import { fileURLToPath } from 'url'
 import pool from './db.js'
 import {
   hashPassword, verifyPassword, signToken,
-  authMiddleware, adminMiddleware, instanceMiddleware, instanceOwnerMiddleware
+  authMiddleware, optionalAuthMiddleware, adminMiddleware, instanceMiddleware, instanceOwnerMiddleware
 } from './auth.js'
+import { getCookiesFromBrowser, doYandexLogin, isLoggedIn, refreshSessionIfNeeded } from './pkc-browser.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -944,30 +945,342 @@ app.get('/api/instances/:instanceId/suggest-category', authMiddleware, instanceM
   }
 })
 
+// ==================== PROVERKACHEKA SESSIONS & PROXY ====================
+
+const pkcSessions = new Map()
+
+app.post('/api/pkc-proxy', async (req, res) => {
+  try {
+    const { fn, fd, fp, n, s, t } = req.body
+    const cookies = req.headers['x-pkc-cookies']
+    if (!cookies) return res.status(400).json({ error: 'No cookies provided' })
+    if (!fn || !fd || !fp) return res.status(400).json({ error: 'Missing fn, fd, fp' })
+
+    let tokenD = 1234
+    const base = fn + String(fd) + String(fp) + String(n || 1) + (s || '') + (t || '') + '1'
+    for (let d = 0; d < 10000; d++) {
+      const hash = String(base + d).split('').reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0)
+      const zeros = String(hash).split('0').length - 1
+      if (zeros > 4) { tokenD = d; break }
+    }
+
+    const body = new URLSearchParams()
+    body.append('fn', fn)
+    body.append('fd', String(fd))
+    body.append('fp', String(fp))
+    body.append('n', String(n || 1))
+    body.append('s', s || '')
+    body.append('t', t || '')
+    body.append('qr', '1')
+    body.append('token', '0.' + tokenD)
+    body.append('status', '')
+
+    const res2 = await fetch('https://proverkacheka.com/api/v1/check/get', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Origin': 'https://proverkacheka.com',
+        'Referer': 'https://proverkacheka.com/',
+        'Cookie': cookies
+      },
+      body: body.toString(),
+      signal: AbortSignal.timeout(15000)
+    })
+
+    const data = await res2.json()
+    res.json(data)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+function getPkcSession(userId) {
+  const s = pkcSessions.get(userId)
+  if (s && s.expiresAt > Date.now()) return s
+  pkcSessions.delete(userId)
+  return null
+}
+
+function setPkcSession(userId, cookies) {
+  pkcSessions.set(userId, { cookies, expiresAt: Date.now() + 24 * 3600 * 1000 })
+}
+
+function buildCookieHeader(cookies) {
+  if (typeof cookies === 'string') {
+    return cookies.split(';').map(c => c.trim()).filter(c => c).map(c => {
+      const m = c.match(/^([^=]+)=(.+)/)
+      if (!m) return null
+      const k = m[1].trim()
+      const v = m[2].trim().replace(/[^\x00-\x7F]/g, '')
+      return `${k}=${v}`
+    }).filter(Boolean).join('; ')
+  }
+  return Object.entries(cookies).map(([k, v]) => `${k}=${String(v).replace(/[^\x00-\x7F]/g, '')}`).join('; ')
+}
+
+async function fetchReceiptFromPkc(fn, fd, fp, n, sum, datetime, cookies) {
+  const t = datetime || ''
+  const s = sum ? String(sum) : ''
+
+  let tokenD = 1234
+  const base = fn + String(fd) + String(fp) + String(n) + s + t + '1'
+  for (let d = 0; d < 10000; d++) {
+    const hash = String(base + d).split('').reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0)
+    const zeros = String(hash).split('0').length - 1
+    if (zeros > 4) { tokenD = d; break }
+  }
+
+  const body = new URLSearchParams()
+  body.append('fn', fn)
+  body.append('fd', String(fd))
+  body.append('fp', String(fp))
+  body.append('n', String(n || 1))
+  body.append('s', s)
+  body.append('t', t)
+  body.append('qr', '1')
+  body.append('token', '0.' + tokenD)
+  body.append('status', '')
+
+  const cookieHeader = cookies ? buildCookieHeader(cookies) : ''
+
+  const res = await fetch('https://proverkacheka.com/api/v1/check/get', {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Origin': 'https://proverkacheka.com',
+      'Referer': 'https://proverkacheka.com/',
+      ...(cookieHeader ? { 'Cookie': cookieHeader } : {})
+    },
+    body: body.toString(),
+    signal: AbortSignal.timeout(15000)
+  })
+
+  if (!res.ok) return null
+  const data = await res.json()
+
+  if (data.code !== 1 || !data.data) return null
+
+  const json = data.data.json
+  if (!json) return null
+
+  const result = {
+    seller: json.user || '',
+    seller_inn: json.userInn || '',
+    items: []
+  }
+
+  if (json.items && Array.isArray(json.items)) {
+    for (const item of json.items) {
+      const name = item.name || ''
+      const price = parseFloat(item.price) / 100
+      const qty = parseFloat(item.quantity) || 1
+      const sumItem = parseFloat(item.sum) / 100
+      if (name) {
+        result.items.push({ name, price, quantity: qty, amount: sumItem || (price * qty) })
+      }
+    }
+  }
+
+  return result
+}
+
+// ==================== YANDEX OAUTH ====================
+
+app.get('/api/yandex/auth-url', authMiddleware, (req, res) => {
+  const state = crypto.randomUUID()
+  const userId = req.user.id
+  pkcSessions.set(userId + '_state', { state, expiresAt: Date.now() + 600000 })
+  const url = `https://oauth.yandex.ru/authorize?response_type=code&client_id=${process.env.YANDEX_OAUTH_ID}&state=${state}&redirect_uri=https://oauth.yandex.ru/verification_code`
+  res.json({ url, state })
+})
+
+app.post('/api/yandex/code', authMiddleware, async (req, res) => {
+  try {
+    const { code, state } = req.body
+    if (!code || !state) return res.status(400).json({ error: 'code and state required' })
+
+    const userId = req.user.id
+    const stored = pkcSessions.get(userId + '_state')
+    if (!stored || stored.expiresAt < Date.now() || stored.state !== state) {
+      return res.status(400).json({ error: 'Invalid or expired state' })
+    }
+    pkcSessions.delete(userId + '_state')
+
+    const tokenRes = await fetch('https://oauth.yandex.ru/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        client_id: process.env.YANDEX_OAUTH_ID,
+        client_secret: process.env.YANDEX_OAUTH_SECRET,
+        redirect_uri: 'https://oauth.yandex.ru/verification_code'
+      })
+    })
+
+    if (!tokenRes.ok) {
+      const errText = await tokenRes.text()
+      console.log('Yandex token error:', errText)
+      return res.status(400).json({ error: 'Failed to get Yandex token: ' + errText })
+    }
+
+    const tokenData = await tokenRes.json()
+    const accessToken = tokenData.access_token
+    if (!accessToken) return res.status(400).json({ error: 'No access token from Yandex' })
+
+    const passportCookies = {}
+    const passportRes = await fetch('https://passport.yandex.ru/auth', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Cookie': `OAuth=${accessToken}`
+      },
+      body: new URLSearchParams({ from: 'proverkacheka' }),
+      signal: AbortSignal.timeout(10000),
+      redirect: 'manual'
+    })
+
+    const setCookieHeaders = passportRes.headers.raw ? passportRes.headers.raw()['set-cookie'] : []
+    if (Array.isArray(setCookieHeaders)) {
+      for (const sc of setCookieHeaders) {
+        const match = sc.match(/^([^=]+)=([^;]+)/)
+        if (match) passportCookies[match[1].trim()] = match[2].trim()
+      }
+    }
+
+    if (Object.keys(passportCookies).length === 0) {
+      const body = await passportRes.text()
+      console.log('Passport status:', passportRes.status, 'body:', body.substring(0, 300))
+      return res.status(400).json({ error: 'No session cookies from Yandex passport' })
+    }
+
+    setPkcSession(userId, passportCookies)
+    console.log('PKC session saved for user', userId, 'cookies:', Object.keys(passportCookies))
+    res.json({ success: true })
+  } catch (err) {
+    console.log('Yandex code error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/yandex/session', authMiddleware, (req, res) => {
+  const session = getPkcSession(req.user.id)
+  res.json({ active: !!session })
+})
+
+// ==================== BROWSER-BASED PKC AUTH ====================
+
+app.get('/api/pkc-browser/status', authMiddleware, async (req, res) => {
+  try {
+    const loggedIn = await isLoggedIn()
+    const session = getPkcSession(req.user.id)
+    res.json({
+      browserLoggedIn: loggedIn,
+      sessionActive: !!session,
+      needsAuth: !loggedIn && !session
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/pkc-browser/init', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id
+    const session = getPkcSession(userId)
+    if (session) {
+      const cookieStr = buildCookieHeader(session.cookies)
+      const testData = await fetchReceiptFromPkc('test', 'test', 'test', 1, 0, '', cookieStr)
+      if (testData !== null || session) {
+        res.json({ success: true, message: 'Session already active' })
+        return
+      }
+    }
+
+    const state = crypto.randomUUID()
+    pkcSessions.set(userId + '_pkc_init', { state, expiresAt: Date.now() + 120000 })
+    const yandexUrl = `https://oauth.yandex.ru/authorize?response_type=code&client_id=${process.env.YANDEX_OAUTH_ID}&state=${state}&redirect_uri=https://oauth.yandex.ru/verification_code`
+
+    res.json({
+      success: true,
+      loginUrl: yandexUrl,
+      message: 'Откройте URL, войдите в Яндекс, и вы будете перенаправлены на proverkacheka.com'
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/pkc-browser/complete', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id
+    const { state } = req.body
+
+    const stored = pkcSessions.get(userId + '_pkc_init')
+    if (!stored || stored.expiresAt < Date.now() || stored.state !== state) {
+      return res.status(400).json({ error: 'Invalid or expired init session' })
+    }
+    pkcSessions.delete(userId + '_pkc_init')
+
+    const result = await doYandexLogin('https://oauth.yandex.ru/authorize?response_type=code&client_id=' + process.env.YANDEX_OAUTH_ID + '&redirect_uri=https://oauth.yandex.ru/verification_code')
+
+    if (result.success && result.cookies) {
+      const cookieObj = {}
+      result.cookies.split(';').forEach(pair => {
+        const m = pair.trim().match(/^([^=]+)=(.+)/)
+        if (m) cookieObj[m[1].trim()] = m[2].trim()
+      })
+      setPkcSession(userId, cookieObj)
+      res.json({ success: true, message: 'Авторизация успешна' })
+    } else {
+      res.status(400).json({ success: false, error: result.error || 'Login failed' })
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/pkc-browser/refresh', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id
+    const result = await refreshSessionIfNeeded(
+      userId,
+      getPkcSession,
+      setPkcSession
+    )
+    if (result.refreshed) {
+      res.json({ success: true, message: 'Сессия обновлена' })
+    } else {
+      res.json({ success: false, needsAuth: true, message: 'Требуется повторная авторизация' })
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ==================== FETCH RECEIPT BY QR CODE (instance-scoped) ====================
 
-app.post('/api/instances/:instanceId/fetch-receipt', authMiddleware, instanceMiddleware, async (req, res) => {
+app.post('/api/instances/:instanceId/fetch-receipt', async (req, res) => {
   try {
-    const { qr_string } = req.body
+    const { qr_string, cookies } = req.body
     if (!qr_string || !qr_string.trim()) return res.status(400).json({ error: 'QR string required' })
 
-    // Parse QR code string: t=20201017T1923&s=1498.00&fn=9282440300669857&i=25151&fp=1186123459&n=1
     const params = new URLSearchParams(qr_string.trim())
-    const t = params.get('t')  // datetime
-    const s = params.get('s')  // sum in kopecks or rubles
-    const fn = params.get('fn') // fiscal number
-    const i = params.get('i')   // fiscal document
-    const fp = params.get('fp') // fiscal sign
-    const n = params.get('n')   // receipt type
+    const t = params.get('t')
+    const s = params.get('s')
+    const fn = params.get('fn')
+    const i = params.get('i')
+    const fp = params.get('fp')
+    const n = params.get('n')
 
     if (!fn || !i || !fp) {
       return res.status(400).json({ error: 'Invalid QR code: missing required fields (fn, i, fp)' })
     }
 
-    // Parse date from QR: t=20201017T1923 -> 2020-10-17
     let receiptDate = new Date().toISOString().slice(0, 10)
     if (t) {
-      // Format: YYYYMMDDTHHMM or YYYYMMDDTHHMMSS
       const year = t.slice(0, 4)
       const month = t.slice(4, 6)
       const day = t.slice(6, 8)
@@ -976,79 +1289,71 @@ app.post('/api/instances/:instanceId/fetch-receipt', authMiddleware, instanceMid
       }
     }
 
-    // Parse sum: could be in kopecks (need to divide by 100) or already in rubles
     let totalSum = 0
     if (s) {
       const parsed = parseFloat(s)
-      // If sum > 10000, likely in kopecks
       totalSum = parsed > 10000 ? parsed / 100 : parsed
     }
 
-    // Try to fetch receipt details from FNS API
-    // FNS API endpoint for receipt verification
-    const fnsUrl = `https://proverkacheka.com/api/v1/check/get?fn=${fn}&fd=${i}&fp=${fp}&n=${n || 1}`
-
-    let items = []
-    let sellerName = ''
-    let sellerInn = ''
-
-    try {
-      const fnsRes = await fetch(fnsUrl, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(10000)
-      })
-
-      if (fnsRes.ok) {
-        const fnsData = await fnsRes.json()
-
-        if (fnsData.data && fnsData.data.json) {
-          const receipt = fnsData.data.json
-
-          // Extract seller info
-          if (receipt.user) sellerName = receipt.user
-          if (receipt.userInn) sellerInn = receipt.userInn
-
-          // Extract items
-          if (receipt.items && Array.isArray(receipt.items)) {
-            for (const item of receipt.items) {
-              const itemName = item.name || ''
-              const itemPrice = parseFloat(item.price) / 100 // FNS returns price in kopecks
-              const itemQty = parseFloat(item.quantity) || 1
-              const itemSum = parseFloat(item.sum) / 100 // FNS returns sum in kopecks
-
-              if (itemName) {
-                items.push({
-                  name: itemName,
-                  price: itemPrice,
-                  quantity: itemQty,
-                  amount: itemSum || (itemPrice * itemQty)
-                })
-              }
-            }
-          }
-        }
-      }
-    } catch (fnsErr) {
-      // FNS API failed, continue with basic info from QR
-      console.log('FNS API error:', fnsErr.message)
+    const authHeader = req.headers.authorization
+    let userId = null
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const payload = verifyToken(authHeader.slice(7))
+        userId = payload.id
+      } catch {}
     }
 
-    // If FNS didn't return items, create a single item from the total
-    if (!items.length && totalSum > 0) {
-      items.push({
-        name: 'Покупка по чеку',
-        price: totalSum,
-        quantity: 1,
-        amount: totalSum
+    let session = userId ? getPkcSession(userId) : null
+    let cookiesHeader = cookies || (session ? session.cookies ? buildCookieHeader(session.cookies) : '' : '')
+
+    if (!cookiesHeader) {
+      return res.json({
+        auth_required: true,
+        _qr: qr_string,
+        message: 'Для проверки чеков необходима авторизация на proverkacheka.com. Откройте сайт, войдите через Яндекс, скопируйте куки и вставьте в форму.'
       })
+    }
+
+    let pkcData = await fetchReceiptFromPkc(fn, i, fp, n, totalSum, t, cookiesHeader)
+
+    if (!pkcData && userId) {
+      const refreshed = await refreshSessionIfNeeded(userId, getPkcSession, setPkcSession)
+      if (refreshed.refreshed) {
+        const newSession = getPkcSession(userId)
+        cookiesHeader = buildCookieHeader(newSession.cookies)
+        pkcData = await fetchReceiptFromPkc(fn, i, fp, n, totalSum, t, cookiesHeader)
+      }
+    }
+
+    if (!pkcData) {
+      if (userId) pkcSessions.delete(userId)
+      return res.json({
+        auth_required: true,
+        _qr: qr_string,
+        message: 'Сессия истекла или невалидна. Пожалуйста, обновите куки.'
+      })
+    }
+
+    if (userId && cookies) {
+      const cookieObj = {}
+      cookies.split(';').forEach(pair => {
+        const m = pair.trim().match(/^([^=]+)=(.+)/)
+        if (m) cookieObj[m[1].trim()] = m[2].trim().replace(/[^\x20-\x7E]/g, '')
+      })
+      setPkcSession(userId, cookieObj)
+    }
+
+    let items = pkcData.items
+    if (!items.length && totalSum > 0) {
+      items.push({ name: 'Покупка по чеку', price: totalSum, quantity: 1, amount: totalSum })
     }
 
     res.json({
       date: receiptDate,
       total: totalSum,
-      seller: sellerName,
-      seller_inn: sellerInn,
+      seller: pkcData.seller,
+      seller_inn: pkcData.seller_inn,
       items,
       raw: { fn, i, fp, n, t, s }
     })
