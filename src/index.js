@@ -299,11 +299,11 @@ app.get('/api/instances/:instanceId/transactions/:id', authMiddleware, instanceM
 
 app.post('/api/instances/:instanceId/transactions', authMiddleware, instanceMiddleware, async (req, res) => {
   try {
-    const { id, name, date, type, price, quantity, amount, category, comment, is_planned, planned_date } = req.body
+    const { id, name, date, type, price, quantity, amount, category, comment, is_planned, planned_date, receipt_key } = req.body
     const { rows } = await pool.query(
-      `INSERT INTO transactions (id, name, date, type, price, quantity, amount, category, comment, instance_id, is_planned, planned_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-      [id || crypto.randomUUID(), name, date, type || 'expense', price, quantity, amount, category, comment || '', req.instanceId, is_planned || false, planned_date || null]
+      `INSERT INTO transactions (id, name, date, type, price, quantity, amount, category, comment, instance_id, is_planned, planned_date, receipt_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+      [id || crypto.randomUUID(), name, date, type || 'expense', price, quantity, amount, category, comment || '', req.instanceId, is_planned || false, planned_date || null, receipt_key || null]
     )
     res.status(201).json(rows[0])
   } catch (err) {
@@ -344,6 +344,81 @@ app.delete('/api/instances/:instanceId/transactions/:id', authMiddleware, instan
   try {
     const { rowCount } = await pool.query(
       'DELETE FROM transactions WHERE id = $1 AND instance_id = $2',
+      [req.params.id, req.instanceId]
+    )
+    if (!rowCount) return res.status(404).json({ error: 'Not found' })
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ==================== SHOPPING LIST ROUTES (instance-scoped) ====================
+
+app.get('/api/instances/:instanceId/shopping', authMiddleware, instanceMiddleware, async (req, res) => {
+  try {
+    const { all } = req.query
+    let sql = 'SELECT id, name, bought, created_by, created_at FROM shopping_items WHERE instance_id = $1'
+    const params = [req.instanceId]
+    if (all !== 'true') {
+      sql += ' AND bought = FALSE'
+    }
+    sql += ' ORDER BY bought ASC, created_at DESC'
+    const { rows } = await pool.query(sql, params)
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/instances/:instanceId/shopping', authMiddleware, instanceMiddleware, async (req, res) => {
+  try {
+    const { name } = req.body
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required' })
+    }
+    const { rows } = await pool.query(
+      'INSERT INTO shopping_items (name, instance_id, created_by) VALUES ($1, $2, $3) RETURNING id, name, bought, created_at',
+      [name.trim(), req.instanceId, req.user.id]
+    )
+    res.status(201).json(rows[0])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.put('/api/instances/:instanceId/shopping/:id', authMiddleware, instanceMiddleware, async (req, res) => {
+  try {
+    const { name, bought } = req.body
+    const sets = []
+    const params = []
+    let idx = 1
+    if (name !== undefined) {
+      sets.push(`name = $${idx++}`)
+      params.push(name.trim())
+    }
+    if (bought !== undefined) {
+      sets.push(`bought = $${idx++}`)
+      params.push(bought)
+    }
+    sets.push(`updated_at = NOW()`)
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update' })
+    params.push(req.params.id, req.instanceId)
+    const { rows } = await pool.query(
+      `UPDATE shopping_items SET ${sets.join(', ')} WHERE id = $${idx++} AND instance_id = $${idx++} RETURNING id, name, bought, updated_at`,
+      params
+    )
+    if (!rows.length) return res.status(404).json({ error: 'Not found' })
+    res.json(rows[0])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.delete('/api/instances/:instanceId/shopping/:id', authMiddleware, instanceMiddleware, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(
+      'DELETE FROM shopping_items WHERE id = $1 AND instance_id = $2',
       [req.params.id, req.instanceId]
     )
     if (!rowCount) return res.status(404).json({ error: 'Not found' })
@@ -415,28 +490,6 @@ app.get('/api/instances/:instanceId/savings', authMiddleware, instanceMiddleware
   }
 })
 
-// Assign free savings transaction(s) to a goal
-app.post('/api/instances/:instanceId/savings/assign', authMiddleware, instanceMiddleware, async (req, res) => {
-  try {
-    const { transaction_ids, goal_id } = req.body
-    if (!transaction_ids || !transaction_ids.length || !goal_id) {
-      return res.status(400).json({ error: 'transaction_ids and goal_id required' })
-    }
-    const ids = transaction_ids.filter(id => id)
-    if (!ids.length) return res.status(400).json({ error: 'No valid transaction ids' })
-
-    const placeholders = ids.map((_, idx) => `$${idx + 3}`).join(',')
-    await pool.query(
-      `UPDATE transactions SET goal_id = $1, savings_type = 'goal'
-       WHERE instance_id = $2 AND id IN (${placeholders}) AND type = 'savings'`,
-      [goal_id, req.instanceId, ...ids]
-    )
-    res.json({ ok: true })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
 // Partially assign free savings to a goal
 app.post('/api/instances/:instanceId/savings/assign-partial', authMiddleware, instanceMiddleware, async (req, res) => {
   try {
@@ -465,7 +518,7 @@ app.post('/api/instances/:instanceId/savings/assign-partial', authMiddleware, in
       if (assignAmount === currentAmount) {
         // Full amount — just update the original
         await pool.query(
-          "UPDATE transactions SET goal_id = $1, savings_type = 'goal' WHERE id = $2",
+          "UPDATE transactions SET goal_id = $1, savings_type = 'goal', category = 'Цели' WHERE id = $2",
           [goal_id, String(a.tx_id)]
         )
       } else {
@@ -474,7 +527,7 @@ app.post('/api/instances/:instanceId/savings/assign-partial', authMiddleware, in
         await pool.query(
           `INSERT INTO transactions (id, name, date, type, amount, category, comment, instance_id, goal_id, savings_type)
            VALUES ($1, $2, $3, 'savings', $4, $5, $6, $7, $8, 'goal')`,
-          [newId, tx.name + ' (часть)', tx.date, assignAmount, tx.category, tx.comment || '', req.instanceId, goal_id]
+          [newId, tx.name + ' (часть)', tx.date, assignAmount, 'Цели', tx.comment || '', req.instanceId, goal_id]
         )
         await pool.query(
           'UPDATE transactions SET amount = amount - $1 WHERE id = $2',
@@ -535,7 +588,7 @@ app.post('/api/instances/:instanceId/savings/transfer', authMiddleware, instance
         if (toTarget === 'free') {
           await pool.query("UPDATE transactions SET goal_id = NULL, savings_type = 'free' WHERE id = $1", [tx.id])
         } else {
-          await pool.query('UPDATE transactions SET goal_id = $1, savings_type = $goal WHERE id = $2', [to_goal_id, tx.id])
+          await pool.query("UPDATE transactions SET goal_id = $1, savings_type = 'goal' WHERE id = $2", [to_goal_id, tx.id])
         }
       } else {
         // Partial — create new tx, reduce original
@@ -588,15 +641,28 @@ app.put('/api/instances/:instanceId/savings/:id', authMiddleware, instanceMiddle
 })
 
 app.delete('/api/instances/:instanceId/savings/:id', authMiddleware, instanceMiddleware, async (req, res) => {
+  const client = await pool.connect()
   try {
-    const { rowCount } = await pool.query(
+    await client.query('BEGIN')
+    const { rowCount } = await client.query(
       'DELETE FROM savings_goals WHERE id = $1 AND instance_id = $2',
       [req.params.id, req.instanceId]
     )
-    if (!rowCount) return res.status(404).json({ error: 'Not found' })
+    if (!rowCount) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Not found' })
+    }
+    await client.query(
+      "UPDATE transactions SET goal_id = NULL, savings_type = 'free' WHERE instance_id = $1 AND goal_id = $2",
+      [req.instanceId, req.params.id]
+    )
+    await client.query('COMMIT')
     res.json({ ok: true })
   } catch (err) {
+    await client.query('ROLLBACK')
     res.status(500).json({ error: err.message })
+  } finally {
+    client.release()
   }
 })
 
@@ -916,6 +982,24 @@ app.get('/api/instances/:instanceId/summary', authMiddleware, instanceMiddleware
 
 // ==================== SUGGEST CATEGORY (instance-scoped) ====================
 
+const CATEGORY_KEYWORDS = [
+  [/\b(молок[оае]|хлеб[а]?|мяс[оа]|сыр[а]?|колбас[аы]|масл[оа]|яйц[ао]|сметан[а]?|йогурт|творог|кефир|овощ[и]?|фрукт[ы]?|картоф[еь]|лук[а]?|морков[ьи]|капуст[а]?|сок[а]?|вод[аы]|сосиск[иа]|кетчуп|майонез|соль|сахар|мук[аи]|кру[па]{2}|рис[а]?|макарон|гречк|овсян|молоко)\b/i, 'продукты'],
+  [/\b(коммунал|жку|газ[а]?|свет|электр[о]?|отоплен|квартплат)\b/i, 'ЖКУ'],
+  [/\b(бензин|автомоб[или]?|шин[аы]|запчаст[и]?|топлив[оа]|дизел[ь]?|гараж|стоянк|парковк|мойк[аи]|техосмотр)\b/i, 'автомобиль'],
+  [/\b(лекарств[оа]|аптек[аи]|таблетк[иа]|витамин[ы]?|врач[а]?|больниц[аы]|поликлиник|медицин|анализ[ы]?)\b/i, 'здоровье'],
+  [/\b(сладост[и]?|конфет[ыа]|шоколад|пирожн[ое]|торт[а]?|морожен[оа]|десерт[а]?|леденец|карамел[ь]?|пряник[и]?|вафл[и]?)\b/i, 'сладости'],
+  [/\b(развлеч|кино|театр|концерт|парк[а]?|аттракцион|квест|игр[ау]|боулинг|бильярд)\b/i, 'развлечения'],
+  [/\b(связ[ьи]|телефон|интернет|мобильн|сим-карт|тариф)\b/i, 'связь'],
+  [/\b(подар[о]?[к]?[а-я]{0,4}|сувенир|праздник[а]?|день\s*рождени|открытк[аи]|цвет[ыа])\b/i, 'подарки'],
+  [/\b(одежд[аы]|обув[ьи]|куртк[аи]|пальт[оа]|джинс[ы]?|футболк[аи]|рубашк[аи]|плать[ея]|кроссовк[иа]|сапог[и]?|брюк[и]?)\b/i, 'одежда'],
+  [/\b(питом[е]?[ц]?|собак[аи]|кошк[аи]|корм[а]?|ветеринар|зоомагазин)\b/i, 'питомцы'],
+  [/\b(огород|рассад[аы]|семен[а]?|сажен[еццы]|лопат[аы]|удобрени|теплиц[аы])\b/i, 'огород'],
+  [/\b(готовая\s*еда|обед[а]?|ужин[а]?|завтрак[а]?|суп[а]?|салат[а]?|курьер|доставк[аи]|ресторан|столов[ая]й|каф[е]?|шаурм[а]?|бургер|пицц[аы]|ролл[ы]?|суши)\b/i, 'готовая еда'],
+  [/\b(благотворительн|пожертв|помощ[ьи]|милостын[я]?|фонд[а]?)\b/i, 'благотворительность'],
+  [/\b(проезд|автобус|маршрутк[аи]|троллейбус|трамва[йя]|метро|билет[а]?|транспорт)\b/i, 'проезд в автобусах'],
+  [/\b(кредит[а]?|займ[а]?|ипотек[аи]|рассрочк[а]?|долг[а]?)\b/i, 'кредиты'],
+]
+
 app.get('/api/instances/:instanceId/suggest-category', authMiddleware, instanceMiddleware, async (req, res) => {
   try {
     const { name } = req.query
@@ -931,7 +1015,16 @@ app.get('/api/instances/:instanceId/suggest-category', authMiddleware, instanceM
        GROUP BY category ORDER BY cnt DESC LIMIT 3`,
       params
     )
-    if (!rows.length) return res.json({ category: '', confidence: 0 })
+    if (!rows.length) {
+      // Fallback: keyword-based suggestion for new instances with no history
+      const lower = name.toLowerCase()
+      for (const [pattern, cat] of CATEGORY_KEYWORDS) {
+        if (pattern.test(lower)) {
+          return res.json({ category: cat, confidence: 60, alternatives: [] })
+        }
+      }
+      return res.json({ category: '', confidence: 0 })
+    }
     const total = rows.reduce((s, r) => s + parseInt(r.cnt), 0)
     const best = rows[0]
     const confidence = Math.min(Math.round((parseInt(best.cnt) / total) * 100), 100)
@@ -1079,6 +1172,25 @@ async function fetchReceiptFromPkc(fn, fd, fp, n, sum, datetime, cookies) {
       const sumItem = parseFloat(item.sum) / 100
       if (name) {
         result.items.push({ name, price, quantity: qty, amount: sumItem || (price * qty) })
+      }
+    }
+  }
+
+  // Merge duplicate items by name (proverkacheka may return split lines for weighted items)
+  if (result.items.length > 0) {
+    const merged = {}
+    for (const item of result.items) {
+      if (merged[item.name]) {
+        merged[item.name].quantity = +(merged[item.name].quantity + item.quantity).toFixed(3)
+        merged[item.name].amount = +(merged[item.name].amount + item.amount).toFixed(2)
+      } else {
+        merged[item.name] = { ...item }
+      }
+    }
+    result.items = Object.values(merged)
+    for (const item of result.items) {
+      if (item.quantity > 0) {
+        item.price = +(item.amount / item.quantity).toFixed(2)
       }
     }
   }
@@ -1349,13 +1461,25 @@ app.post('/api/instances/:instanceId/fetch-receipt', async (req, res) => {
       items.push({ name: 'Покупка по чеку', price: totalSum, quantity: 1, amount: totalSum })
     }
 
+    const receiptKey = `${fn}_${i}_${fp}`
+    let isDuplicate = false
+    if (userId) {
+      const { rows } = await pool.query(
+        `SELECT COUNT(*) as cnt FROM transactions WHERE receipt_key = $1 AND instance_id = $2`,
+        [receiptKey, req.params.instanceId]
+      )
+      isDuplicate = parseInt(rows[0].cnt) > 0
+    }
+
     res.json({
       date: receiptDate,
       total: totalSum,
       seller: pkcData.seller,
       seller_inn: pkcData.seller_inn,
       items,
-      raw: { fn, i, fp, n, t, s }
+      raw: { fn, i, fp, n, t, s },
+      receipt_key: receiptKey,
+      duplicate: isDuplicate
     })
   } catch (err) {
     res.status(500).json({ error: err.message })

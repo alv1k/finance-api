@@ -107,7 +107,9 @@ const statements = [
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS savings_type TEXT DEFAULT 'free' CHECK (savings_type IN ('free', 'goal'))`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_planned BOOLEAN DEFAULT FALSE`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS planned_date DATE`,
+  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS receipt_key TEXT DEFAULT NULL`,
   `CREATE INDEX IF NOT EXISTS idx_transactions_is_planned ON transactions(instance_id, is_planned, planned_date)`,
+  `CREATE INDEX IF NOT EXISTS idx_transactions_receipt_key ON transactions(receipt_key)`,
 
   `CREATE TABLE IF NOT EXISTS credits (
     id               SERIAL PRIMARY KEY,
@@ -139,6 +141,17 @@ const statements = [
   `ALTER TABLE credit_payments ADD COLUMN IF NOT EXISTS early_strategy TEXT DEFAULT 'reduce_term' CHECK (early_strategy IN ('reduce_term', 'reduce_payment'))`,
   `CREATE INDEX IF NOT EXISTS idx_credit_payments_credit_id ON credit_payments(credit_id)`,
   `CREATE INDEX IF NOT EXISTS idx_credit_payments_date ON credit_payments(payment_date)`,
+
+  `CREATE TABLE IF NOT EXISTS shopping_items (
+    id          SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL,
+    instance_id INTEGER NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+    bought      BOOLEAN DEFAULT FALSE,
+    created_by  INTEGER REFERENCES users(id),
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_shopping_items_instance ON shopping_items(instance_id)`,
 ]
 
 try {
