@@ -17,8 +17,8 @@ let imported = 0
 for (const row of data) {
   try {
     await pool.query(
-      `INSERT INTO transactions (id, name, date, price, quantity, amount, category, comment)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO transactions (id, name, date, price, quantity, amount, comment)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (id) DO NOTHING`,
       [
         row['ID'],
@@ -27,7 +27,6 @@ for (const row of data) {
         row['Цена'] || 0,
         row['Количество'] || 0,
         row['Сумма'] || 0,
-        row['Классификация'] || '',
         row['Комментарий'] || '',
       ]
     )

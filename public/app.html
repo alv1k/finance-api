@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Finance — Управление бюджетом</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
+<title>TIIN Finance — Управление бюджетом</title>
+<link rel="icon" href="/favicon.png">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#0f1117;--surface:#1a1d2e;--surface2:#252a3a;--border:#2d3748;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--accent:#6366f1;--accent2:#818cf8;--accent-bg:rgba(99,102,241,.1);--green:#22c55e;--green-bg:rgba(34,197,94,.1);--green2:#4ade80;--red:#ef4444;--red-bg:rgba(239,68,68,.1);--red2:#f87171;--orange:#f59e0b;--orange-bg:rgba(245,158,11,.1);--r:12px;--rs:8px}
@@ -13,6 +13,13 @@ a{color:var(--accent2);text-decoration:none}
 input,select,textarea{width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px}
 select{-webkit-appearance:none;-moz-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2394a3b8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 19px center;background-size:10px 6px;padding-right:34px}
 input:focus,select:focus{outline:none;border-color:var(--accent)}
+input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus,
+textarea:-webkit-autofill,select:-webkit-autofill{
+  -webkit-text-fill-color:var(--text);
+  -webkit-box-shadow:0 0 0 1000px var(--bg) inset;
+  box-shadow:0 0 0 1000px var(--bg) inset;
+  transition:background-color 9999s ease-in-out 0s;
+}
 button{padding:10px 20px;border:none;border-radius:var(--rs);font-size:14px;cursor:pointer;font-weight:600;transition:all .2s}
 button.primary{background:var(--accent);color:#fff}button.primary:hover{background:var(--accent2)}
 button.success{background:var(--green-bg);color:var(--green2)}button.danger{background:var(--red-bg);color:var(--red2)}
@@ -41,6 +48,15 @@ button.sm{padding:6px 12px;font-size:12px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px;margin-bottom:16px}
 .card-title{font-size:15px;font-weight:600;margin-bottom:16px}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px}
+.stats-grid.cols3{grid-template-columns:repeat(3,1fr)}
+.free-assign{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.fa-line{display:flex;align-items:center;gap:8px}
+.fa-line-main{flex:1;min-width:0}
+.fa-lbl{font-size:13px;color:var(--text2);flex:none}
+.fa-total{font-size:11px;color:var(--text3);white-space:nowrap;flex:none}
+.stats-grid.nowrap .stat{min-width:0}
+.stats-grid.nowrap .stat .val{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stats-grid.nowrap .stat .sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px}
 .stat .lbl{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
 .stat .val{font-size:26px;font-weight:700}.stat .val.g{color:var(--green)}.stat .val.r{color:var(--red)}.stat .val.a{color:var(--accent2)}
@@ -48,8 +64,8 @@ button.sm{padding:6px 12px;font-size:12px}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;padding:10px 12px;background:var(--surface2);color:var(--text3);font-size:11px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
 th:first-child{border-radius:var(--rs) 0 0 var(--rs)}th:last-child{border-radius:0 var(--rs) var(--rs) 0}
-td{padding:12px;;font-size:14px;vertical-align:middle;white-space: nowrap;overflow: hidden;text-overflow: ellipsis;}
-td.el-name{max-width:200px}
+td{padding:12px;font-size:14px;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td.el-name{max-width:200px;white-space:normal;word-break:break-word}
 tr{border-bottom:1px solid var(--border)}
 tr:hover td{background:var(--surface2)}
 td.amt{font-weight:600;font-variant-numeric:tabular-nums}
@@ -64,9 +80,14 @@ td.amt.exp{color:var(--red2)}td.amt.inc{color:var(--green2)}
 .modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:24px;width:100%;max-width:900px;max-height:calc(100vh - 32px);overflow-y:auto;margin:auto}
 @media(max-width:768px){
   .modal{max-width:100%;padding:16px}
-  .tx-item-row>div:first-child{grid-template-columns:1fr 1fr !important;gap:6px}
-  .tx-item-row>div:first-child>div:nth-child(5){grid-column:1/-1}
-  .tx-item-row>div:first-child>div:nth-child(6){grid-column:1/-1}
+  .tx-item-row>div:first-child{grid-template-columns:1fr 1fr 1fr !important;gap:6px}
+  .tx-item-row>div:first-child>div:nth-child(1){grid-column:1/-1}
+  .tx-item-row>div:first-child>div:nth-child(2){grid-column:span 1}
+  .tx-item-row>div:first-child>div:nth-child(3){grid-column:span 1}
+  .tx-item-row>div:first-child>div:nth-child(4){grid-column:span 1}
+  .tx-item-row>div:first-child>div:nth-child(5){grid-column:1/span 2}
+  .tx-item-row>div:first-child>div:nth-child(6){grid-column:span 1}
+  .planned-ext{display:none!important}
 }
 .modal-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
 .modal-hdr h2{font-size:17px}.modal-x{cursor:pointer;color:var(--text3);font-size:22px;padding:4px}.modal-x:hover{color:var(--text)}
@@ -121,6 +142,14 @@ td.amt.exp{color:var(--red2)}td.amt.inc{color:var(--green2)}
   .sidebar{display:none}
   .main{margin-left:0;padding:12px;padding-top:68px;max-width:100%}
   .stats-grid{grid-template-columns:1fr 1fr;gap:10px}
+  .stats-grid.cols3{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .stats-grid.cols3 .stat{min-width:0;padding:12px}
+  .stats-grid.cols3 .stat .val{font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stats-grid.cols3 .stat .sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .free-assign{flex-direction:column;align-items:stretch;gap:8px}
+  .free-assign .fa-line{width:100%}
+  .free-assign .fa-lbl{width:96px;flex:none}
+  .free-assign #free-assign-amount{flex:1}
   .stat{padding:14px}
   .stat .val{font-size:20px}
   .page-header{flex-direction:column;align-items:flex-start;gap:8px}
@@ -133,9 +162,14 @@ td.amt.exp{color:var(--red2)}td.amt.inc{color:var(--green2)}
   .modal{max-width:100%;padding:16px;max-height:calc(100vh - 24px)}
   .bar-lbl{font-size:8px}
   table{display:block;overflow-x:auto;width:100%;-webkit-overflow-scrolling:touch}
-  .tx-item-row>div:first-child{grid-template-columns:1fr 1fr !important;gap:6px}
-  .tx-item-row>div:first-child>div:nth-child(5){grid-column:1/-1}
-  .tx-item-row>div:first-child>div:nth-child(6){grid-column:1/-1}
+  .tx-item-row>div:first-child{grid-template-columns:1fr 1fr 1fr !important;gap:6px}
+  .tx-item-row>div:first-child>div:nth-child(1){grid-column:1/-1}
+  .tx-item-row>div:first-child>div:nth-child(2){grid-column:span 1}
+  .tx-item-row>div:first-child>div:nth-child(3){grid-column:span 1}
+  .tx-item-row>div:first-child>div:nth-child(4){grid-column:span 1}
+  .tx-item-row>div:first-child>div:nth-child(5){grid-column:1/span 2}
+  .tx-item-row>div:first-child>div:nth-child(6){grid-column:span 1}
+  .planned-ext{display:none!important}
 }
 .air-datepicker{
   --adp-z-index:120!important;
@@ -165,7 +199,7 @@ td.amt.exp{color:var(--red2)}td.amt.inc{color:var(--green2)}
 .dp-reset{width:32px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;background:var(--surface2);color:var(--text2);border:1px solid var(--border);border-radius:var(--rs)}
 .dp-reset:hover{background:var(--red-bg);color:var(--red2)}
 .pager{display:flex;gap:6px;justify-content:center;margin-top:16px;flex-wrap:wrap;align-items:center}
-.td-actions{display:flex;align-items:center;justify-content:flex-end;width:100%}
+.td-actions{text-align:right;white-space:nowrap;vertical-align:middle}
 .pager button[disabled]{opacity:.4;cursor:default}
 .pager-dots{color:var(--text3);padding:0 2px;user-select:none}
 .cds{position:relative;width:100%}
@@ -175,8 +209,8 @@ td.amt.exp{color:var(--red2)}td.amt.inc{color:var(--green2)}
 .cds-lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:8px}
 .cds-arrow{flex:none;transition:transform .2s ease;color:var(--text3)}
 .cds.open .cds-arrow{transform:rotate(180deg)}
-.cds-menu{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:60;background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);box-shadow:0 10px 30px rgba(0,0,0,.45);max-height:240px;overflow-y:auto;padding:4px;opacity:0;transform:translateY(-6px) scale(.99);visibility:hidden;pointer-events:none;transition:opacity .18s ease,transform .18s ease,visibility .18s}
-.cds.open .cds-menu{opacity:1;transform:translateY(0) scale(1);visibility:visible;pointer-events:auto}
+.cds-menu{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:150;background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);box-shadow:0 10px 30px rgba(0,0,0,.45);max-height:240px;overflow-y:auto;padding:4px;opacity:0;transform:translateY(-6px) scale(.99);visibility:hidden;pointer-events:none;transition:opacity .18s ease,transform .18s ease,visibility .18s}
+.cds-menu.active{opacity:1;transform:translateY(0) scale(1);visibility:visible;pointer-events:auto}
 .cds:not(.open) .cds-menu{max-height:0;padding:0;border-width:0;overflow:hidden}
 .cds-opt{padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .12s,color .12s}
 .cds-opt:hover{background:var(--surface2);color:var(--text)}
@@ -213,6 +247,32 @@ td.amt.exp{color:var(--red2)}td.amt.inc{color:var(--green2)}
 }
 .form-check-lbl{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text2);user-select:none}
 .form-check-lbl:hover{color:var(--text)}
+.modal{max-height:80vh;overflow-y:auto}
+.modal-sm{min-width:0;width:auto}
+.modal-centered{overflow:visible}
+.landing-page { position: relative; min-height: 100vh; overflow-x: hidden; background: var(--bg); display: flex; flex-direction: column; }
+.landing-bg { position: absolute; top: 0; left: 0; right: 0; bottom: 0; overflow: hidden; z-index: 0; pointer-events: none; }
+.landing-bg .shape { position: absolute; border-radius: 50%; filter: blur(100px); opacity: 0.5; z-index: 0; }
+.landing-bg .shape-1 { top: -10%; left: -10%; width: 50vw; height: 50vw; background: radial-gradient(circle, var(--accent) 0%, transparent 70%); }
+.landing-bg .shape-2 { bottom: -20%; right: -10%; width: 60vw; height: 60vw; background: radial-gradient(circle, var(--accent2) 0%, transparent 70%); }
+.landing-content { position: relative; z-index: 1; display: flex; flex-direction: column; flex: 1; max-width: 1200px; margin: 0 auto; width: 100%; padding: 0 24px; }
+.landing-hdr { display: flex; justify-content: space-between; align-items: center; padding: 32px 0; }
+.landing-logo { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; color: #fff; display: flex; align-items: center; gap: 8px; }
+.landing-login-btn { background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); border-radius: 100px; padding: 10px 24px; font-weight: 600; transition: all 0.3s; color: #fff; cursor: pointer; }
+.landing-login-btn:hover { background: rgba(255,255,255,0.2); transform: translateY(-2px); }
+.landing-hero { text-align: center; padding: 80px 0 60px; max-width: 800px; margin: 0 auto; }
+.hero-title { font-size: 64px; font-weight: 800; line-height: 1.1; margin-bottom: 24px; background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -1.5px; }
+.hero-subtitle { font-size: 20px; color: var(--text2); margin-bottom: 40px; line-height: 1.6; }
+.hero-btn { font-size: 18px; padding: 16px 40px; border-radius: 100px; background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%); box-shadow: 0 10px 30px rgba(99,102,241,0.3); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); color: #fff; border: none; cursor: pointer; font-weight: 600; }
+.hero-btn:hover { transform: translateY(-3px) scale(1.02); box-shadow: 0 15px 40px rgba(99,102,241,0.4); }
+.landing-features { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; padding: 40px 0 80px; }
+.feature-card { background: rgba(26, 29, 46, 0.6); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); border-radius: 24px; padding: 32px; transition: transform 0.3s; }
+.feature-card:hover { transform: translateY(-5px); border-color: rgba(255,255,255,0.1); }
+.feature-card .f-icon { font-size: 40px; margin-bottom: 20px; display: inline-block; padding: 16px; background: rgba(255,255,255,0.03); border-radius: 20px; }
+.feature-card h3 { font-size: 20px; margin-bottom: 12px; color: #fff; }
+.feature-card p { color: var(--text2); line-height: 1.6; }
+@media(max-width: 768px) { .hero-title { font-size: 40px; } .landing-hero { padding: 40px 0 20px; } .feature-card { padding: 24px; } }
+.auth-err { text-align: center; margin-top: 12px; min-height: 40px; white-space: normal; text-wrap: balance; display: flex; align-items: center; justify-content: center; color: var(--red2); }
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/air-datepicker@3/air-datepicker.css">
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
@@ -271,7 +331,16 @@ function initCustomSelect(sel){
   arrow.innerHTML=CDS_ARROW
   toggle.appendChild(lbl);toggle.appendChild(arrow)
 
-  var menu=el('div',{className:'cds-menu'})
+  var menu=el('div',{className:'cds-menu',style:'position:fixed;z-index:1000'})
+  document.body.appendChild(menu)
+
+  function positionMenu(){
+    if(!wrap.classList.contains('open'))return
+    var rect=toggle.getBoundingClientRect()
+    menu.style.top=(rect.bottom+4)+'px'
+    menu.style.left=rect.left+'px'
+    menu.style.width=rect.width+'px'
+  }
 
   var options=[]
   function addOpt(node){
@@ -296,6 +365,7 @@ function initCustomSelect(sel){
       }
     })
   }
+
   function currentLabel(){
     return sel.options[sel.selectedIndex]?sel.options[sel.selectedIndex].text:''
   }
@@ -309,18 +379,26 @@ function initCustomSelect(sel){
     sel.dispatchEvent(new Event('change'))
     close()
   }
+
   function open(){
     wrap.classList.add('open')
+    menu.classList.add('active')
+    positionMenu()
     toggle.setAttribute('aria-expanded','true')
   }
   function close(){
     wrap.classList.remove('open')
+    menu.classList.remove('active')
     toggle.setAttribute('aria-expanded','false')
   }
   toggle.addEventListener('click',function(e){
     e.stopPropagation()
     wrap.classList.contains('open')?close():open()
   })
+  document.addEventListener('close-all-cds', close)
+  window.addEventListener('scroll', positionMenu, true)
+  window.addEventListener('resize', positionMenu)
+
   toggle.setAttribute('aria-haspopup','listbox')
   toggle.setAttribute('aria-expanded','false')
   toggle.addEventListener('keydown',function(e){
@@ -339,13 +417,12 @@ function initCustomSelect(sel){
     options[idx].focus()
   }
   document.addEventListener('click',function outside(e){
-    if(!wrap.contains(e.target))close()
+    if(!wrap.contains(e.target)&&!menu.contains(e.target))close()
   })
 
   build();update()
 
   wrap.appendChild(toggle)
-  wrap.appendChild(menu)
   sel.parentNode.insertBefore(wrap,sel.nextSibling)
   wrap.appendChild(sel)
 }
@@ -380,14 +457,24 @@ function fmtM(m){const mo=m.split('-')[1];return['Янв','Фев','Мар','А�
 function toISO(d){if(!d)return '';const dt=d instanceof Date?d:new Date(d);return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0')}
 
 function dp(inputEl,opts){
+  if(typeof inputEl === 'string') inputEl = document.querySelector(inputEl);
   opts=opts||{}
   var cfg={
-    dateFormat:'yyyy-MM-dd',
+    dateFormat: opts.dateFormat || 'd MMM yyyy',
     autoClose:opts.autoClose!==false,
     range:!!opts.range,
-    multipleDatesSeparator:' – '
+    multipleDatesSeparator:' – ',
+    isMobile: window.innerWidth <= 768
   }
-  if(opts.value)cfg.startDate=opts.value
+  if(opts.value) {
+    var dt = new Date(opts.value);
+    if(typeof opts.value==='string' && opts.value.match(/^\d{4}-\d{2}-\d{2}$/)){
+      var pts=opts.value.split('-');
+      dt = new Date(parseInt(pts[0]), parseInt(pts[1])-1, parseInt(pts[2]));
+    }
+    cfg.startDate = dt;
+    cfg.selectedDates = [dt];
+  }
   if(opts.onSelect)cfg.onSelect=function(pick){
     var inst=pick.datepicker||pick
     var dates=inst.selectedDates||[]
@@ -395,7 +482,17 @@ function dp(inputEl,opts){
     if(dates.length&&opts.autoClose&&!opts.range)inst.hide()
   }
   var picker=new AirDatepicker(inputEl,cfg)
+  inputEl._dp = picker;
   return picker
+}
+
+function getDateVal(el) {
+  if (typeof el === 'string') el = document.getElementById(el);
+  if (!el) return null;
+  if (el._dp && el._dp.selectedDates && el._dp.selectedDates.length) {
+    return toISO(el._dp.selectedDates[0]);
+  }
+  return el.value;
 }
 
 async function api(path,opts){
@@ -404,7 +501,40 @@ async function api(path,opts){
   const r=await fetch(API+path,Object.assign({},opts,{headers:Object.assign({},h,opts&&opts.headers)}))
   const d=await r.json().catch(function(){return null})
   if(!r.ok)throw new Error(d?d.error:'HTTP '+r.status)
+  
+  if (opts && opts.method === 'POST' && path.indexOf('analytics/track') === -1) {
+    setTimeout(function() {
+      var act = null, et = null, eid = d ? d.id : null;
+      var iid = (typeof curInst !== 'undefined' && curInst) ? curInst.id : null;
+      
+      if(path === 'api/auth/login') { act = 'login'; et = 'user'; eid = d.user ? d.user.id : null; }
+      else if(path === 'api/auth/register') { act = 'register'; et = 'user'; eid = d.user ? d.user.id : null; }
+      else if(path === 'api/instances') { act = 'create_instance'; et = 'instance'; }
+      else if(path.match(/instances\/\d+\/transactions$/)) { act = 'add_transaction'; et = 'transaction'; }
+      else if(path.match(/instances\/\d+\/savings$/)) { act = 'add_savings'; et = 'savings_goal'; }
+      else if(path.match(/instances\/\d+\/credits$/)) { act = 'add_credit'; et = 'credit'; }
+      else if(path.match(/instances\/\d+\/categories$/)) { act = 'edit_category'; et = 'category'; }
+      else if(path.match(/instances\/\d+\/join$/)) { act = 'invite_member'; et = 'instance'; eid = iid; }
+      else if(path.match(/instances\/\d+\/requests\/\d+\/approve$/)) { act = 'approve_member'; et = 'instance'; eid = iid; }
+      
+      if (act) trackAction(act, et, eid, iid);
+    }, 10);
+  }
+  
   return d
+}
+
+function trackAction(actionType, entityType, entityId, instanceId) {
+  if(!token) return
+  api('api/analytics/track', {
+    method:'POST',
+    body:JSON.stringify({
+      action_type: actionType,
+      entity_type: entityType || null,
+      entity_id: entityId || null,
+      instance_id: instanceId || (typeof curInst !== 'undefined' && curInst ? curInst.id : null)
+    })
+  }).catch(function(e){ console.error('Track error:', e) })
 }
 
 function toast(msg,t){
@@ -413,19 +543,30 @@ function toast(msg,t){
   setTimeout(function(){e.remove()},3000)
 }
 
-function modal(title,body){
-  const modalEl=el('div',{className:'modal'},[
+function modal(title,body,opts){
+  opts=opts||{}
+  const closeModal = () => {
+    document.dispatchEvent(new CustomEvent('close-all-cds'));
+    o.remove();
+  };
+  const modalEl=el('div',{className:'modal'+(opts.small?' modal-sm':'')+(opts.centered?' modal-centered':''),style:opts.style},[
     el('div',{className:'modal-hdr'},[
       el('h2',{},title),
-      el('span',{className:'modal-x',onclick:function(){o.remove()}},'×')
+      el('span',{className:'modal-x',onclick:closeModal},'×')
     ]),
     body
   ])
   const o=el('div',{className:'modal-overlay active'},modalEl)
-  o.addEventListener('click',function(e){
-    if(e.target===o)o.remove()
-  })
+  let isMouseDownOnOverlay = false;
+  o.addEventListener('mousedown', function(e) {
+    if (e.target === o) isMouseDownOnOverlay = true;
+  });
+  o.addEventListener('mouseup', function(e) {
+    if (isMouseDownOnOverlay && e.target === o) closeModal();
+    isMouseDownOnOverlay = false;
+  });
   document.body.appendChild(o)
+  fixModalTop(o)
   return o
 }
 function fixModalTop(overlay){
@@ -434,46 +575,83 @@ function fixModalTop(overlay){
   var top=m.getBoundingClientRect().top
   var pad=parseInt(getComputedStyle(overlay).paddingTop)||0
   var mt=Math.max(0,top-pad)
-  m.style.marginTop=mt+'px'
-  m.style.marginBottom='0px'
-  m.style.maxHeight=Math.max(240,window.innerHeight-top-pad)+'px'
+  if(!m.classList.contains('modal-sm') && !m.classList.contains('modal-centered')){
+    m.style.marginTop=mt+'px'
+    m.style.marginBottom='0px'
+    m.style.maxHeight=Math.max(240,window.innerHeight-top-pad)+'px'
+  }
 }
 function mclose(){var o=document.querySelectorAll('.modal-overlay.active');if(o.length)o[o.length-1].remove()}
 
 // ==================== AUTH ====================
-function renderLogin(){
+function renderLanding(){
   var a=document.getElementById('app')
   a.innerHTML=''
-  a.className=''
-  a.appendChild(el('div',{className:'login-wrap'},
-    el('div',{className:'login-box'},[
-      el('h1',{},'💰 Finance'),
-      el('div',{className:'sub'},'Войдите в аккаунт'),
-      urlPrefill?el('div',{className:'notice'},'📋 После входа откроется форма создания транзакции с данными из чека'):null,
-      el('div',{className:'form-group'},[el('label',{},'Логин'),el('input',{id:'au',type:'text',placeholder:'Логин',onkeydown:function(e){if(e.key==='Enter')doLogin()}})]),
-      el('div',{className:'form-group'},[el('label',{},'Пароль'),el('input',{id:'ap',type:'password',placeholder:'Пароль',onkeydown:function(e){if(e.key==='Enter')doLogin()}})]),
-      el('button',{className:'primary',onclick:doLogin},'Войти'),
-      el('div',{className:'sw'},['Нет аккаунта? ',el('a',{href:'#',onclick:function(e){e.preventDefault();renderReg()}},'Регистрация')]),
-      el('div',{className:'err',id:'ae'})
+  a.className='landing-page'
+  
+  var hdr=el('div',{className:'landing-hdr'},[
+    el('div',{className:'landing-logo',style:'display:flex;align-items:center'},[el('img',{src:'/favicon.png',style:'height:32px;margin-right:12px'}),'TIIN Finance']),
+    el('button',{className:'landing-login-btn',onclick:function(){showAuthModal(false)}},'Войти')
+  ])
+  
+  var hero=el('div',{className:'landing-hero'},[
+    el('h1',{className:'hero-title'},'Управляйте финансами легко и красиво'),
+    el('p',{className:'hero-subtitle'},'Интуитивный трекер расходов, совместный бюджет и умное сканирование чеков.'),
+    urlPrefill?el('div',{className:'notice',style:'margin-bottom:24px;font-size:15px;background:var(--accent-bg);color:var(--accent2);border:1px solid var(--accent);padding:12px;border-radius:12px'},'📋 Ваш чек успешно обработан! Войдите, чтобы сохранить транзакцию.'):null,
+    el('button',{className:'hero-btn',onclick:function(){showAuthModal(true)}},'Начать бесплатно')
+  ])
+  
+  var features=el('div',{className:'landing-features'},[
+    el('div',{className:'feature-card'},[
+      el('div',{className:'f-icon'},'🧾'),
+      el('h3',{},'Умное сканирование'),
+      el('p',{},'Добавляйте чеки через Telegram, а нейросеть сама распишет товары и подберет категории.')
+    ]),
+    el('div',{className:'feature-card'},[
+      el('div',{className:'f-icon'},'🤝'),
+      el('h3',{},'Совместный бюджет'),
+      el('p',{},'Создавайте инстансы для семьи или бизнеса и ведите учет вместе в реальном времени.')
+    ]),
+    el('div',{className:'feature-card'},[
+      el('div',{className:'f-icon'},'📊'),
+      el('h3',{},'Наглядная аналитика'),
+      el('p',{},'Красивые графики и сводки помогут вам понять, куда уходят деньги.')
     ])
-  ))
+  ])
+  
+  var content=el('div',{className:'landing-content'},[hdr,hero,features])
+  var bg=el('div',{className:'landing-bg'},[
+    el('div',{className:'shape shape-1'}),
+    el('div',{className:'shape shape-2'})
+  ])
+  
+  a.appendChild(bg)
+  a.appendChild(content)
+  
+  if(urlPrefill) {
+     setTimeout(function(){ showAuthModal(false) }, 500);
+  }
 }
 
-function renderReg(){
-  var a=document.getElementById('app')
-  a.innerHTML=''
-  a.className=''
-  a.appendChild(el('div',{className:'login-wrap'},
-    el('div',{className:'login-box'},[
-      el('h1',{},'💰 Finance'),
-      el('div',{className:'sub'},'Создайте аккаунт'),
-      el('div',{className:'form-group'},[el('label',{},'Логин'),el('input',{id:'au',type:'text',placeholder:'Логин',onkeydown:function(e){if(e.key==='Enter')doReg()}})]),
-      el('div',{className:'form-group'},[el('label',{},'Пароль'),el('input',{id:'ap',type:'password',placeholder:'Мин. 6 символов',onkeydown:function(e){if(e.key==='Enter')doReg()}})]),
-      el('button',{className:'primary',onclick:doReg},'Зарегистрироваться'),
-      el('div',{className:'sw'},['Есть аккаунт? ',el('a',{href:'#',onclick:function(e){e.preventDefault();renderLogin()}},'Войти')]),
-      el('div',{className:'err',id:'ae'})
-    ])
-  ))
+function showAuthModal(isReg){
+  mclose()
+  var wrap=el('div',{})
+  
+  var build=function(){
+    wrap.innerHTML=''
+    wrap.appendChild(el('div',{className:'sub',style:'text-align:center;margin-bottom:24px'},isReg?'Создайте аккаунт':'Войдите в аккаунт'))
+    wrap.appendChild(el('div',{className:'form-group'},[el('label',{},'Логин'),el('input',{id:'au',type:'text',placeholder:'Логин',onkeydown:function(e){if(e.key==='Enter') isReg?doReg():doLogin()}})]))
+    wrap.appendChild(el('div',{className:'form-group'},[el('label',{},'Пароль'),el('input',{id:'ap',type:'password',placeholder:isReg?'Мин. 6 символов':'Пароль',onkeydown:function(e){if(e.key==='Enter') isReg?doReg():doLogin()}})]))
+    wrap.appendChild(el('button',{className:'primary',style:'width:100%;margin-top:8px;padding:12px;font-size:16px',onclick:isReg?doReg:doLogin},isReg?'Зарегистрироваться':'Войти'))
+    wrap.appendChild(el('div',{className:'sw',style:'text-align:center;margin-top:16px'},[
+      isReg?'Есть аккаунт? ':'Нет аккаунта? ',
+      el('a',{href:'#',onclick:function(e){e.preventDefault();showAuthModal(!isReg)}},isReg?'Войти':'Регистрация')
+    ]))
+    wrap.appendChild(el('div',{className:'err auth-err',id:'ae'}))
+  }
+  
+  build()
+  modal(isReg?'💰 Регистрация':'💰 Вход', wrap, {centered:true, style:'width:100%;max-width:400px'})
 }
 
 function doLogin(){
@@ -481,9 +659,9 @@ function doLogin(){
   var password=document.getElementById('ap').value
   document.getElementById('ae').textContent=''
   api('api/auth/login',{method:'POST',body:JSON.stringify({username:username,password:password})})
-    .then(function(d){token=d.token;user=d.user;localStorage.setItem('token',token);return loadCategories()})
+    .then(function(d){token=d.token;user=d.user;localStorage.setItem('token',token);trackAction('login','user',user.id);return loadCategories()})
     .then(function(){return loadInsts()})
-    .then(function(){if(instances.length){curInst=instances[0];renderApp()}else{renderInstanceGate()}})
+    .then(function(){mclose();if(instances.length){curInst=instances[0];renderApp()}else{renderInstanceGate()}})
     .catch(function(e){document.getElementById('ae').textContent=e.message})
 }
 
@@ -492,16 +670,16 @@ function doReg(){
   var password=document.getElementById('ap').value
   document.getElementById('ae').textContent=''
   api('api/auth/register',{method:'POST',body:JSON.stringify({username:username,password:password})})
-    .then(function(d){token=d.token;user=d.user;localStorage.setItem('token',token);return loadCategories()})
+    .then(function(d){token=d.token;user=d.user;localStorage.setItem('token',token);trackAction('register','user',user.id);return loadCategories()})
     .then(function(){return loadInsts()})
-    .then(function(){if(instances.length){curInst=instances[0];renderApp()}else{renderInstanceGate()}})
+    .then(function(){mclose();if(instances.length){curInst=instances[0];renderApp()}else{renderInstanceGate()}})
     .catch(function(e){document.getElementById('ae').textContent=e.message})
 }
 
 function logout(){
   token=null;user=null;instances=[];curInst=null
   localStorage.removeItem('token')
-  renderLogin()
+  renderLanding()
 }
 
 // ==================== INSTANCE GATE ====================
@@ -519,7 +697,7 @@ function renderInstanceGate(){
     for(var i=0;i<instances.length;i++){
       var inst=instances[i]
       var roleLabel=inst.role==='owner'?' 👑 владелец':' участник'
-      var btn=el('div',{className:'card',style:'cursor:pointer;margin-bottom:8px;display:flex;align-items:center;gap:10px',onclick:(function(x){return function(){curInst=x;renderApp()}})(inst)},[
+      var btn=el('div',{className:'card',style:'cursor:pointer;margin-bottom:8px;display:flex;align-items:center;gap:10px',onclick:(function(x){return function(){curInst=x;loadCategories().then(function(){renderApp()})}})(inst)},[
         el('span',{style:'font-size:20px'},'📁'),
         el('div',{},[
           el('div',{style:'font-weight:600;font-size:15px'},inst.name),
@@ -630,7 +808,7 @@ function renderMobileDrawer(){
   var overlay=el('div',{className:'mobile-drawer-overlay',id:'mobile-drawer-overlay'})
   overlay.addEventListener('click',closeMobileDrawer)
   var drawer=el('div',{className:'mobile-drawer',id:'mobile-drawer'})
-  drawer.appendChild(el('div',{className:'drawer-logo'},'💰 Finance'))
+  drawer.appendChild(el('div',{className:'drawer-logo',style:'display:flex;align-items:center'},[el('img',{src:'/favicon.png',style:'height:28px;margin-right:10px'}),'TIIN Finance']))
   if(instances.length){
     var opts=[el('option',{value:''},'— Выберите —')]
     for(var i=0;i<instances.length;i++){
@@ -644,7 +822,7 @@ function renderMobileDrawer(){
         if(instances[j].id===id){curInst=instances[j];break}
       }
       if(!curInst&&id)curInst={id:id}
-      nav(curPage)
+      loadCategories().then(function(){nav(curPage)})
     }},opts)
     drawer.appendChild(el('div',{className:'inst-sel',style:'margin-bottom:12px'},sel))
   }
@@ -704,7 +882,7 @@ function closeMobileDrawer(){
 
 function renderSidebar(){
   var s=el('div',{className:'sidebar'})
-  s.appendChild(el('div',{className:'logo'},'💰 Finance'))
+  s.appendChild(el('div',{className:'logo',style:'display:flex;align-items:center'},[el('img',{src:'/favicon.png',style:'height:28px;margin-right:10px'}),'TIIN Finance']))
 
   if(instances.length){
     var opts=[el('option',{value:''},'— Выберите —')]
@@ -719,7 +897,7 @@ function renderSidebar(){
         if(instances[j].id===id){curInst=instances[j];break}
       }
       if(!curInst&&id)curInst={id:id}
-      nav(curPage)
+      loadCategories().then(function(){nav(curPage)})
     }},opts)
     s.appendChild(el('div',{className:'inst-sel'},sel))
   }
@@ -751,7 +929,7 @@ function renderSidebar(){
   return s
 }
 
-var pageTitles={dashboard:'Дашборд',transactions:'Транзакции',savings:'Накопления',credits:'Кредиты',instances:'Инстансы'}
+var pageTitles={dashboard:'Дашборд',transactions:'Транзакции',accounts:'Счета',savings:'Накопления',credits:'Кредиты',instances:'Инстансы'}
 function nav(p){
   curPage=p
   var items=document.querySelectorAll('.nav-item')
@@ -774,6 +952,7 @@ function nav(p){
   }
   if(p==='dashboard')loadDash()
   else if(p==='transactions')loadTx()
+  else if(p==='accounts')loadAccounts()
   else if(p==='savings')loadSavings()
   else if(p==='credits')loadCredits()
   else if(p==='instances')loadInstPage()
@@ -784,6 +963,7 @@ function loadInsts(){
   return api('api/instances').then(function(d){
     instances=d
     if(instances.length&&!curInst)curInst=instances[0]
+    if(curInst)return loadCategories()
   }).catch(function(e){console.error(e)})
 }
 
@@ -811,6 +991,8 @@ function loadInstPage(){
       el('button',{className:'sm ghost',onclick:(function(x){return function(){openMembers(x)}})(inst)},'Участники')
     ]
     if(inst.role==='owner'){
+      actions.push(el('button',{className:'sm ghost',onclick:(function(x){return function(){showRenameInst(x)}})(inst),style:'margin-left:6px'},'Переименовать'))
+      actions.push(el('button',{className:'sm ghost',onclick:(function(x){return function(){showCategories(x)}})(inst),style:'margin-left:6px'},'Категории'))
       actions.push(el('button',{className:'sm danger',onclick:(function(id){return function(){delInst(id)}})(inst.id),style:'margin-left:6px'},'Удалить'))
     }
     rows.push(el('tr',{},[
@@ -854,11 +1036,182 @@ function doCreateInst(){
     .catch(function(e){toast(e.message,'err')})
 }
 
+function showRenameInst(inst){
+  modal('Переименовать инстанс',el('div',{},[
+    el('div',{className:'form-group'},[el('label',{},'Название'),el('input',{id:'ri-name',value:inst.name})]),
+    el('div',{className:'form-actions'},[
+      el('button',{className:'primary',onclick:function(){doRenameInst(inst.id)}},'Сохранить'),
+      el('button',{className:'ghost',onclick:mclose},'Отмена')
+    ])
+  ]))
+}
+
+function doRenameInst(id){
+  var name=document.getElementById('ri-name').value
+  if(!name)return toast('Введите название','err')
+  api('api/instances/'+id,{method:'PUT',body:JSON.stringify({name:name})})
+    .then(function(){
+      mclose();toast('Сохранено')
+      return loadInsts().then(function(){
+        for(var i=0;i<instances.length;i++){
+          if(instances[i].id===id){curInst=instances[i];break}
+        }
+      })
+    })
+    .then(function(){
+      renderApp()
+      nav('instances')
+    })
+    .catch(function(e){toast(e.message,'err')})
+}
+
 function delInst(id){
   if(!confirm('Удалить?'))return
   api('api/instances/'+id,{method:'DELETE'})
     .then(function(){toast('Удалено');loadInsts();renderApp()})
     .catch(function(e){toast(e.message,'err')})
+}
+
+var SERVICE_CAT_NAMES=['Цели','Свободные накопления','накопления','кредиты','без классификации','доход','']
+
+function showCategories(inst){
+  var addForm=el('div',{style:'display:none;display:flex;gap:6px;align-items:center;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px'},[
+    el('input',{id:'cat-add-name',placeholder:'Название',style:'flex:1 1 200px;min-width:0;padding:10px 8px;font-size:13px'}),
+    el('select',{id:'cat-add-type',style:'flex:1 1 200px;padding:6px 8px;font-size:13px'},[
+      el('option',{value:'expense'},'расход'),
+      el('option',{value:'income'},'доход'),
+      el('option',{value:'savings'},'накопления')
+    ]),
+    el('button',{className:'primary sm'},'Добавить'),
+    el('button',{className:'ghost sm'},'Отмена')
+  ])
+  var cl=el('div',{id:'cat-list'})
+  var b=el('div',{},[
+    el('div',{style:'margin-bottom:12px;font-size:13px;color:var(--text2)'},'Изменения категорий применяются только к этому инстансу'),
+    addBtn,
+    addForm,
+    cl
+  ])
+  modal('Категории: '+inst.name,b,{small:true})
+  var addSubmit=addForm.children[2]
+  var addCancel=addForm.children[3]
+  addBtn.onclick=function(){
+    addForm.style.display=addForm.style.display==='flex'?'none':'flex'
+    if(addForm.style.display==='flex')document.getElementById('cat-add-name').focus()
+  }
+  addCancel.onclick=function(){addForm.style.display='none'}
+  addSubmit.onclick=function(){
+    var nn=document.getElementById('cat-add-name').value.trim()
+    var ty=document.getElementById('cat-add-type').value
+    if(!nn)return toast('Введите название','err')
+    api('api/instances/'+inst.id+'/categories',{method:'POST',body:JSON.stringify({name:nn,type:ty})})
+      .then(function(){toast('Категория добавлена');mclose();showCategories(inst);if(inst.id===curInst.id)loadCategories()})
+      .catch(function(e){toast(e.message,'err')})
+  }
+  api('api/instances/'+inst.id+'/categories').then(function(cats){
+    cl.innerHTML=''
+    var list=cats.filter(function(c){return SERVICE_CAT_NAMES.indexOf(c.name)===-1})
+    list.sort(function(a,b){return a.name.localeCompare(b.name,'ru')})
+    if(!list.length){cl.innerHTML='<p class="empty">Нет категорий</p>';return}
+    var groups=[{type:'expense',label:'РАСХОД'},{type:'income',label:'ДОХОД'},{type:'savings',label:'НАКОПЛЕНИЯ'}]
+    for(var g=0;g<groups.length;g++){
+      (function(grp){
+        var items=list.filter(function(c){return c.type===grp.type})
+        if(!items.length)return
+        var head=el('div',{style:"font-size:12px;font-weight:600;text-transform:uppercase;color:var(--text2);margin:14px 0 2px"},grp.label)
+        cl.appendChild(head)
+        for(var i=0;i<items.length;i++){
+          (function(cat){
+            var editBtn=el('button',{className:'sm ghost',style:'margin-left:8px'},'✎')
+            var delBtn=el('button',{className:'sm danger',style:'margin-left:2px'},'🗑')
+            var usedLabel=cat.used>0?el('span',{style:'font-size:12px;color:var(--text2)'},' ('+cat.used+')'):null
+            var nameSpan=el('span',{style:'flex:1;font-size:14px'},cat.name)
+            if(usedLabel) nameSpan.appendChild(usedLabel)
+            var nameRow=el('div',{style:'display:flex;align-items:center;flex:1'},[nameSpan,editBtn,delBtn])
+            var rowEl=el('div',{style:'display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)'},[
+              nameRow
+            ])
+            editBtn.onclick=function(){
+              var inp=el('input',{value:cat.name,style:'flex:1;min-width:0;padding:6px 8px;font-size:13px'})
+              var saveBtn=el('button',{className:'primary sm'},'Сохранить')
+              var cancelBtn=el('button',{className:'ghost sm'},'Отмена')
+              saveBtn.onclick=function(){
+                var nn=inp.value.trim()
+                if(!nn)return toast('Введите название','err')
+                api('api/instances/'+inst.id+'/categories/'+cat.id,{method:'PUT',body:JSON.stringify({name:nn})})
+                  .then(function(){toast('Категория переименована');mclose();showCategories(inst);if(inst.id===curInst.id)loadCategories()})
+                  .catch(function(e){toast(e.message,'err')})
+              }
+              cancelBtn.onclick=function(){mclose();showCategories(inst)}
+              rowEl.replaceChild(el('div',{style:'display:flex;gap:6px;align-items:center;flex:1'},[inp,saveBtn,cancelBtn]),nameRow)
+              inp.focus()
+            }
+            delBtn.onclick=function(){
+              if(!cat.is_instance){
+                if(!confirm('Скрыть шаблон «'+cat.name+'» для этого инстанса? Другие инстансы не затрагиваются.'))return
+                api('api/instances/'+inst.id+'/categories/'+cat.id,{method:'DELETE'})
+                  .then(function(){toast('Шаблон скрыт');mclose();showCategories(inst);if(inst.id===curInst.id)loadCategories()})
+                  .catch(function(e){toast(e.message,'err')})
+                return
+              }
+              if(cat.used>0){
+                showCatReplacement(inst,cat,cats)
+                return
+              }
+              if(!confirm('Удалить категорию «'+cat.name+'»?'))return
+              api('api/instances/'+inst.id+'/categories/'+cat.id,{method:'DELETE'})
+                .then(function(){toast('Категория удалена');mclose();showCategories(inst);if(inst.id===curInst.id)loadCategories()})
+                .catch(function(e){toast(e.message,'err')})
+            }
+            cl.appendChild(rowEl)
+          })(items[i])
+        }
+      })(groups[g])
+    }
+  }).catch(function(e){toast(e.message,'err')})
+}
+
+function showCatReplacement(inst,cat,cats){
+  var others=cats.filter(function(c){
+    return c.id!==cat.id && SERVICE_CAT_NAMES.indexOf(c.name)===-1
+  })
+  var sel=el('select',{style:'flex:1;min-width:0;padding:6px 8px;font-size:13px'},[
+    el('option',{value:'__new__'},'— Новая категория —')
+  ])
+  for(var i=0;i<others.length;i++){
+    sel.appendChild(el('option',{value:others[i].id},others[i].name))
+  }
+  var newWrap=el('div',{style:'display:flex;gap:6px;margin-top:8px'},
+    [el('input',{id:'cat-replace-new',placeholder:'Название новой категории',style:'flex:1;min-width:0;padding:6px 8px;font-size:13px'})])
+  var btnRow=el('div',{style:'display:flex;gap:8px;margin-top:14px'},[
+    el('button',{className:'primary',style:'flex:1'},'Перенести и удалить'),
+    el('button',{className:'ghost',style:'flex:1'},'Отмена')
+  ])
+  var b=el('div',{style:'max-height:70vh;padding-right:8px'},[
+    el('p',{style:'font-size:13px;margin:0 0 10px'},'Категория «'+cat.name+'» используется ('+cat.used+' тр.). Куда перенести транзакции?'),
+    sel,
+    newWrap,
+    btnRow
+  ])
+  var saveBtn=btnRow.children[0]
+  var cancelBtn=btnRow.children[1]
+  sel.onchange=function(){newWrap.style.display=sel.value==='__new__'?'flex':'none'}
+  newWrap.style.display='none'
+  cancelBtn.onclick=function(){mclose();showCategories(inst)}
+  saveBtn.onclick=function(){
+    var body={}
+    if(sel.value==='__new__'){
+      var nn=document.getElementById('cat-replace-new').value.trim()
+      if(!nn)return toast('Введите название новой категории','err')
+      body.new_category_name=nn
+    }else{
+      body.replace_category_id=sel.value
+    }
+    api('api/instances/'+inst.id+'/categories/'+cat.id,{method:'DELETE',body:JSON.stringify(body)})
+      .then(function(){toast('Категория удалена, транзакции перенесены');mclose();showCategories(inst);if(inst.id===curInst.id)loadCategories()})
+      .catch(function(e){toast(e.message,'err')})
+  }
+  modal('Перенос транзакций',b,{centered:true})
 }
 
 function doJoin(){
@@ -981,13 +1334,15 @@ function loadSavings(){
     el('div',{className:'subtitle'},'Цели и прогресс накоплений')
   ]))
 
-  api('api/instances/'+curInst.id+'/savings')
-    .then(function(d){
-      buildSavingsSummary(p, d)
-      buildSavingsFree(p, d)
-      buildSavingsGoals(p, d)
-      buildSavingsMonthlyChart(p, d)
-    })
+   api('api/instances/'+curInst.id+'/savings')
+     .then(function(d){
+       buildSavingsSummary(p, d)
+       buildSavingsFree(p, d)
+       buildSavingsGoals(p, d)
+       buildSavingsMonthlyChart(p, d)
+       buildSavingsWithdrawal(p, d)
+       buildSavingsAdjustment(p, d)
+     })
     .catch(function(e){
       p.innerHTML='<div class="empty"><p>Ошибка: '+e.message+'</p></div>'
     })
@@ -1008,7 +1363,7 @@ function buildSavingsSummary(p, d){
     }
   }
   p.appendChild(el('div',{className:'card',style:'margin-bottom:16px'},[
-    el('div',{className:'stats-grid',style:'margin-bottom:0'},[
+    el('div',{className:'stats-grid cols3',style:'margin-bottom:0'},[
       el('div',{className:'stat'},[
         el('div',{className:'lbl'},'Всего накоплено'),
         el('div',{className:'val g'},fmt(d.totalSaved)+' ₽'),
@@ -1024,14 +1379,24 @@ function buildSavingsSummary(p, d){
         el('div',{className:'val g'},fmt(monthTotal)+' ₽'),
         el('div',{className:'sub'},monthCount+' переводов')
       ]),
-      el('div',{className:'stat'},[
-        el('div',{className:'lbl'},'Свободные накопления'),
-        el('div',{className:'val '+(d.freeTotal>0?'g':'')},fmt(d.freeTotal)+' ₽'),
-        el('div',{className:'sub'},'можно распределить по целям')
+       el('div',{className:'stat'},[
+         el('div',{className:'lbl'},'Свободные накопления'),
+         el('div',{className:'val '+(d.freeTotal>0?'g':'')},fmt(d.freeTotal)+' ₽'),
+         el('div',{className:'sub'},'можно распределить по целям')
+       ]),
+        el('div',{className:'stat'},[
+          el('div',{className:'lbl'},'Изъято'),
+          el('div',{className:'val '+(d.withdrawalTotal>0?'r':'')},fmt(d.withdrawalTotal)+' ₽'),
+          el('div',{className:'sub'},(d.withdrawals?d.withdrawals.length:0)+' операций')
+        ]),
+        el('div',{className:'stat'},[
+          el('div',{className:'lbl'},'Корректировки'),
+          el('div',{className:'val '+(d.adjustmentTotal>0?'r':'')},fmt(d.adjustmentTotal)+' ₽'),
+          el('div',{className:'sub'},(d.adjustments?d.adjustments.length:0)+' операций')
+        ])
       ])
-    ])
-  ]))
-}
+    ]))
+  }
 
 function buildSavingsFree(p, d){
   if(!d.transactions)return
@@ -1045,66 +1410,77 @@ function buildSavingsFree(p, d){
   ])
   card.appendChild(header)
 
-  var assignAmounts={}
   var goalOptions=d.goals||[]
 
-  for(var ti=0;ti<freeTx.length;ti++){
-    var tx=freeTx[ti]
-    var txId=tx.id
-    card.appendChild(el('div',{style:'padding:8px 12px;background:var(--surface2);border-radius:var(--rs);margin-bottom:6px'},[
-      el('div',{style:'display:flex;align-items:center;gap:8px;margin-bottom:6px'},[
-        el('div',{style:'flex:1'},[
-          el('div',{style:'font-size:13px;font-weight:500'},tx.name),
-          el('div',{style:'font-size:11px;color:var(--text3)'},fmtD(tx.date)+(tx.category?' · '+tx.category:''))
-        ]),
-        el('span',{style:'font-weight:600;color:var(--green)'},fmt(tx.amount)+' ₽')
+  card.appendChild(el('div',{style:'padding:8px 12px;background:var(--surface2);border-radius:var(--rs);margin-bottom:6px'},[
+    el('div',{style:'display:flex;align-items:center;gap:8px;margin-bottom:6px'},[
+      el('div',{style:'flex:1'},[
+        el('div',{style:'font-size:13px;font-weight:500'},'Свободные накопления'),
+        el('div',{style:'font-size:11px;color:var(--text3)'},freeTx.length+' переводов')
       ]),
-      el('div',{style:'display:flex;align-items:center;gap:6px'},[
-        el('span',{style:'font-size:11px;color:var(--text3)',style:'white-space:nowrap'},'Назначить:'),
-        el('input',{type:'number',step:'0.01',min:'0',max:tx.amount,placeholder:'0.00',style:'width:100px;padding:4px 8px;font-size:12px',
-          oninput:function(id, maxAmt){return function(){
-            var v=parseFloat(this.value)||0
-            if(v>maxAmt)v=maxAmt
-            if(v<0)v=0
-            assignAmounts[id]=v
-          }}(txId, tx.amount)
-        }),
-        el('span',{style:'font-size:11px;color:var(--text3)'},'из '+fmt(tx.amount)+' ₽')
-      ])
-    ]))
-  }
+      el('span',{style:'font-weight:600;color:var(--green)'},fmt(d.freeTotal)+' ₽')
+    ])
+  ]))
 
   if(goalOptions.length){
-    card.appendChild(el('div',{style:'display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)'},[
-      el('span',{style:'font-size:13px;color:var(--text2);align-self:center'},'На цель:'),
-      (function(){
-        var sel=el('select',{style:'flex:1',id:'free-goal-select'},[
-          el('option',{value:''},'Выберите цель')
-        ])
-        for(var gi=0;gi<goalOptions.length;gi++){
-          sel.appendChild(el('option',{value:goalOptions[gi].id},goalOptions[gi].name+' ('+fmt(goalOptions[gi].saved)+'/'+fmt(goalOptions[gi].target_amount)+' ₽)'))
-        }
-        return sel
-      })(),
-      el('button',{className:'btn btn-success sm',onclick:function(){
-        var goalId=document.getElementById('free-goal-select').value
-        if(!goalId)return toast('Выберите цель','err')
-        var assignments=[]
-        for(var txId in assignAmounts){
-          if(assignAmounts[txId]>0)assignments.push({tx_id:txId,amount:assignAmounts[txId]})
-        }
-        if(!assignments.length)return toast('Укажите сумму для назначения','err')
-        api('api/instances/'+curInst.id+'/savings/assign-partial',{method:'POST',body:JSON.stringify({assignments:assignments,goal_id:parseInt(goalId)})})
-          .then(function(){toast('Назначено');loadSavings()})
-          .catch(function(e){toast(e.message,'err')})
-      }},'Назначить')
+    card.appendChild(el('div',{className:'free-assign',style:'margin-top:12px;padding-top:12px;border-top:1px solid var(--border)'},[
+      el('div',{className:'fa-line'},[
+        el('span',{className:'fa-lbl'},'Назначить:'),
+        el('input',{type:'number',step:'0.01',min:'0',max:d.freeTotal,placeholder:'0.00',id:'free-assign-amount',style:'width:120px'})
+      ]),
+      el('div',{className:'fa-line fa-line-main'},[
+        el('span',{className:'fa-total'},'из '+fmt(d.freeTotal)+' ₽'),
+        el('select',{style:'flex:1',id:'free-goal-select'},[
+          el('option',{value:''},'На цель:')
+        ].concat(goalOptions.map(function(g){
+          return el('option',{value:g.id},g.name+' ('+fmt(g.saved)+'/'+fmt(g.target_amount)+' ₽)')
+        }))),
+        el('button',{className:'btn btn-success sm',onclick:function(){
+          var goalId=document.getElementById('free-goal-select').value
+          if(!goalId)return toast('Выберите цель','err')
+          var amount=parseFloat(document.getElementById('free-assign-amount').value)||0
+          if(amount<=0)return toast('Укажите сумму','err')
+          if(amount>d.freeTotal)return toast('Сумма превышает свободные накопления','err')
+          api('api/instances/'+curInst.id+'/savings/assign',{method:'POST',body:JSON.stringify({amount:amount,goal_id:parseInt(goalId)})})
+            .then(function(){toast('Назначено');loadSavings()})
+            .catch(function(e){toast(e.message,'err')})
+        }},'Назначить')
+      ])
     ]))
+   }
+
+   var wFreeTx=d.transactions.filter(function(t){return t.savings_type==='withdrawal'&&!t.goal_id})
+   if(wFreeTx.length){
+      card.appendChild(el('div',{style:'margin-top:12px;padding-top:12px;border-top:1px solid var(--border)'},[
+        el('div',{style:'font-size:12px;color:var(--text3);margin-bottom:6px'},'Изъятия из свободных накоплений:')
+      ]))
+      for(var wi=0;wi<wFreeTx.length;wi++){
+        var wtx=wFreeTx[wi]
+        card.appendChild(el('div',{style:'display:flex;justify-content:space-between;font-size:12px;padding:2px 0'},[
+          el('span',{style:'color:var(--text2)'},fmtD(wtx.date)+' · '+wtx.name),
+          el('span',{style:'color:var(--red)'},'-'+fmt(wtx.amount)+' ₽')
+        ]))
+      }
+     }
+
+    var aFreeTx=d.transactions.filter(function(t){return t.savings_type==='adjustment'&&!t.goal_id})
+    if(aFreeTx.length){
+      card.appendChild(el('div',{style:'margin-top:12px;padding-top:12px;border-top:1px solid var(--border)'},[
+        el('div',{style:'font-size:12px;color:var(--text3);margin-bottom:6px'},'Корректировки свободных накоплений:')
+      ]))
+      for(var ai=0;ai<aFreeTx.length;ai++){
+        var atx=aFreeTx[ai]
+        card.appendChild(el('div',{style:'display:flex;justify-content:space-between;font-size:12px;padding:2px 0'},[
+          el('span',{style:'color:var(--text2)'},fmtD(atx.date)+' · '+atx.name),
+          el('span',{style:'color:var(--red)'},'-'+fmt(atx.amount)+' ₽')
+        ]))
+      }
+     }
+
+    p.appendChild(card)
   }
 
-  p.appendChild(card)
-}
-
-function buildSavingsGoals(p, d){
+  function buildSavingsGoals(p, d){
   var goalsCard=el('div',{className:'card',style:'margin-bottom:16px'})
   var header=el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},[
     el('div',{className:'card-title',style:'margin-bottom:0'},'Цели накоплений'),
@@ -1132,46 +1508,72 @@ function buildSavingsGoals(p, d){
   p.appendChild(goalsCard)
 }
 
-function buildGoalCard(g, txs){
-  var saved=parseFloat(g.saved||g.current_amount||0)
-  var target=parseFloat(g.target_amount||0)
-  var pct=target>0?Math.min(Math.round((saved/target)*100),100):0
-  var isDone=pct>=100
-  var children=[
-    el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'},[
-      el('div',{style:'font-weight:600;font-size:14px'},g.name),
-      el('div',{style:'display:flex;gap:4px'},[
-        el('button',{className:'sm ghost',style:'padding:4px 8px;font-size:11px',onclick:(function(goal){return function(){showSavGoalForm(goal)}})(g)},'✏️'),
-        el('button',{className:'sm ghost',style:'padding:4px 8px;font-size:11px',onclick:(function(goal){return function(){showTransferModal(goal)}})(g)},'⬆'),
-        el('button',{className:'sm danger',style:'padding:4px 8px;font-size:11px',onclick:(function(goal){return function(){deleteSavGoal(goal.id)}})(g)},'✕')
-      ])
-    ]),
-    el('div',{style:'display:flex;justify-content:space-between;font-size:12px;color:var(--text3);margin-bottom:6px'},[
-      el('span',{},fmt(saved)+' / '+fmt(target)+' ₽'),
-      el('span',{},isDone?'✅ Достигнуто':pct+'%')
-    ]),
-    el('div',{style:'height:6px;background:var(--border);border-radius:3px;overflow:hidden'},[
-      el('div',{style:'height:100%;width:'+pct+'%;background:'+(isDone?'var(--green)':'var(--accent)')+';border-radius:3px'})
-    ])
-  ]
-  if(g.target_date){
-    children.push(el('div',{style:'font-size:11px;color:var(--text3);margin-top:4px'},'📅 Целевая дата: '+fmtDateLong(g.target_date)))
-  }
-  if(txs&&txs.length){
-    var txListEl=el('div',{style:'margin-top:8px;padding-top:8px;border-top:1px solid var(--border)'})
-    txListEl.appendChild(el('div',{style:'font-size:11px;color:var(--text3);margin-bottom:4px'},'Переводы ('+txs.length+'):'))
-    for(var i=0;i<txs.length;i++){
-      txListEl.appendChild(el('div',{style:'display:flex;justify-content:space-between;font-size:11px;padding:2px 0'},[
-        el('span',{style:'color:var(--text2)'},fmtD(txs[i].date)+' · '+txs[i].name),
-        el('span',{style:'color:var(--green)'},fmt(txs[i].amount)+' ₽')
-      ]))
+ function buildGoalCard(g, txs){
+   var saved=parseFloat(g.saved||g.current_amount||0)
+   var target=parseFloat(g.target_amount||0)
+   var pct=target>0?Math.min(Math.round((saved/target)*100),100):0
+   var isDone=pct>=100
+   var wtxs=(txs||[]).filter(function(t){return t.savings_type==='withdrawal'})
+   var atxs=(txs||[]).filter(function(t){return t.savings_type==='adjustment'})
+   var rtxs=(txs||[]).filter(function(t){return t.savings_type!=='withdrawal'&&t.savings_type!=='adjustment'})
+   var children=[
+     el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'},[
+       el('div',{style:'font-weight:600;font-size:14px'},g.name),
+       el('div',{style:'display:flex;gap:4px'},[
+         el('button',{className:'sm ghost',style:'padding:4px 8px;font-size:11px',onclick:(function(goal){return function(){showSavGoalForm(goal)}})(g),title:'Редактировать'},'✏️'),
+         el('button',{className:'sm ghost',style:'padding:4px 8px;font-size:11px',onclick:(function(goal){return function(){showTransferModal(goal)}})(g),title:'Пополнить / Перевести'},'⬆'),
+         el('button',{className:'sm ghost',style:'padding:4px 8px;font-size:11px;color:var(--accent)',onclick:(function(goal){return function(){showSpendGoalModal(goal)}})(g),title:'Потратить'},'💸'),
+         el('button',{className:'sm danger',style:'padding:4px 8px;font-size:11px',onclick:(function(goal){return function(){deleteSavGoal(goal.id)}})(g),title:'Удалить'},'✕')
+       ])
+     ]),
+     el('div',{style:'display:flex;justify-content:space-between;font-size:12px;color:var(--text3);margin-bottom:6px'},[
+       el('span',{},fmt(saved)+' / '+fmt(target)+' ₽'),
+       el('span',{},isDone?'✅ Достигнуто':pct+'%')
+     ]),
+     el('div',{style:'height:6px;background:var(--border);border-radius:3px;overflow:hidden'},[
+       el('div',{style:'height:100%;width:'+pct+'%;background:'+(isDone?'var(--green)':'var(--accent)')+';border-radius:3px'})
+     ])
+   ]
+   if(g.target_date){
+     children.push(el('div',{style:'font-size:11px;color:var(--text3);margin-top:4px'},'📅 Целевая дата: '+fmtDateLong(g.target_date)))
+   }
+   if(rtxs&&rtxs.length){
+     var txListEl=el('div',{style:'margin-top:8px;padding-top:8px;border-top:1px solid var(--border)'})
+     txListEl.appendChild(el('div',{style:'font-size:11px;color:var(--text3);margin-bottom:4px'},'Переводы ('+rtxs.length+'):'))
+     for(var i=0;i<rtxs.length;i++){
+       txListEl.appendChild(el('div',{style:'display:flex;justify-content:space-between;font-size:11px;padding:2px 0'},[
+         el('span',{style:'color:var(--text2)'},fmtD(rtxs[i].date)+' · '+rtxs[i].name),
+         el('span',{style:'color:var(--green)'},fmt(rtxs[i].amount)+' ₽')
+       ]))
+     }
+     children.push(txListEl)
+   }
+   if(wtxs&&wtxs.length){
+     var wListEl=el('div',{style:'margin-top:8px;padding-top:8px;border-top:1px solid var(--border)'})
+     wListEl.appendChild(el('div',{style:'font-size:11px;color:var(--red);margin-bottom:4px'},'Изъятия ('+wtxs.length+'):'))
+     for(var wi=0;wi<wtxs.length;wi++){
+       wListEl.appendChild(el('div',{style:'display:flex;justify-content:space-between;font-size:11px;padding:2px 0'},[
+         el('span',{style:'color:var(--text2)'},fmtD(wtxs[wi].date)+' · '+wtxs[wi].name),
+         el('span',{style:'color:var(--red)'},'-'+fmt(wtxs[wi].amount)+' ₽')
+       ]))
+     }
+      children.push(wListEl)
     }
-    children.push(txListEl)
+    if(atxs&&atxs.length){
+      var aListEl=el('div',{style:'margin-top:8px;padding-top:8px;border-top:1px solid var(--border)'})
+      aListEl.appendChild(el('div',{style:'font-size:11px;color:var(--red);margin-bottom:4px'},'Корректировки ('+atxs.length+'):'))
+      for(var ai=0;ai<atxs.length;ai++){
+        aListEl.appendChild(el('div',{style:'display:flex;justify-content:space-between;font-size:11px;padding:2px 0'},[
+          el('span',{style:'color:var(--text2)'},fmtD(atxs[ai].date)+' · '+atxs[ai].name),
+          el('span',{style:'color:var(--red)'},'-'+fmt(atxs[ai].amount)+' ₽')
+        ]))
+      }
+      children.push(aListEl)
+    }
+    return el('div',{style:'padding:12px;background:var(--surface2);border-radius:var(--rs);margin-bottom:8px'},children)
   }
-  return el('div',{style:'padding:12px;background:var(--surface2);border-radius:var(--rs);margin-bottom:8px'},children)
-}
 
-function buildSavingsMonthlyChart(p, d){
+ function buildSavingsMonthlyChart(p, d){
   if(!d.byMonth||!d.byMonth.length)return
   var maxM=1
   for(var mi=0;mi<d.byMonth.length;mi++)maxM=Math.max(maxM,d.byMonth[mi].total)
@@ -1185,13 +1587,161 @@ function buildSavingsMonthlyChart(p, d){
       el('span',{className:'bar-lbl'},fmtM(mo.month))
     ]))
   }
-  p.appendChild(el('div',{className:'card'},[
-    el('div',{className:'card-title'},'Накопления по месяцам'),
-    el('div',{className:'chart-wrap'},bars)
-  ]))
-}
+   p.appendChild(el('div',{className:'card'},[
+     el('div',{className:'card-title'},'Накопления по месяцам'),
+     el('div',{className:'chart-wrap'},bars)
+   ]))
+ }
 
-function showSavGoalForm(goal){
+ function buildSavingsWithdrawal(p, d){
+   var card=el('div',{className:'card',style:'margin-bottom:16px'})
+   var header=el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},[
+     el('div',{className:'card-title',style:'margin-bottom:0'},'📤 Изъятие из накоплений'),
+     el('span',{style:'font-size:13px;color:var(--text3)'},'Изъято: '+fmt(d.withdrawalTotal||0)+' ₽')
+   ])
+   card.appendChild(header)
+
+   var form=el('div',{className:'form-grid'},[
+     el('div',{className:'form-group'},[
+       el('label',{},'Сумма (₽) *'),
+       el('input',{id:'w-amount',type:'number',step:'0.01',min:'0.01',placeholder:'0.00'})
+     ]),
+     el('div',{className:'form-group'},[
+       el('label',{},'Из чего'),
+       (function(){
+         var sel=el('select',{id:'w-source'})
+         sel.appendChild(el('option',{value:''},'— выберите —'))
+         if(d.freeTotal>0) sel.appendChild(el('option',{value:'free'},'Свободные накопления ('+fmt(d.freeTotal)+' ₽)'))
+         if(d.goals){
+           for(var gi=0;gi<d.goals.length;gi++){
+             var g=d.goals[gi]
+             var saved=parseFloat(g.saved||g.current_amount||0)
+             if(saved>0) sel.appendChild(el('option',{value:g.id},g.name+' ('+fmt(saved)+' ₽)'))
+           }
+         }
+         return sel
+       })()
+     ]),
+     el('div',{className:'form-group'},[
+       el('label',{},'Название *'),
+       el('input',{id:'w-name',placeholder:'Например: Списание за ремонт'})
+     ]),
+     el('div',{className:'form-group'},[
+       el('label',{},'Комментарий'),
+       el('input',{id:'w-comment',placeholder:''})
+     ])
+   ])
+
+   form.appendChild(el('div',{className:'form-actions'},[
+     el('button',{className:'primary',onclick:function(){
+       var amount=parseFloat(document.getElementById('w-amount').value)||0
+       var source=document.getElementById('w-source').value
+       var name=document.getElementById('w-name').value
+       var comment=document.getElementById('w-comment').value
+       if(!amount||amount<=0)return toast('Укажите сумму','err')
+       if(!source)return toast('Выберите источник','err')
+       if(!name)return toast('Укажите название','err')
+       var body={amount:amount,name:name,comment:comment,date:new Date().toISOString().slice(0,10)}
+       if(source!=='free')body.goal_id=parseInt(source)
+       api('api/instances/'+curInst.id+'/savings/withdraw',{method:'POST',body:JSON.stringify(body)})
+         .then(function(){toast('Изъято');loadSavings()})
+         .catch(function(e){toast(e.message,'err')})
+     }},'Изъять')
+   ]))
+   
+   card.appendChild(form)
+
+   if(d.withdrawals&&d.withdrawals.length){
+     var listEl=el('div',{style:'margin-top:12px;padding-top:12px;border-top:1px solid var(--border)'})
+     listEl.appendChild(el('div',{style:'font-size:12px;color:var(--text3);margin-bottom:6px'},'Последние изъятия ('+d.withdrawals.length+'):'))
+     for(var wi=0;wi<Math.min(d.withdrawals.length,10);wi++){
+       var wtx=d.withdrawals[wi]
+       listEl.appendChild(el('div',{style:'display:flex;justify-content:space-between;font-size:12px;padding:2px 0'},[
+         el('span',{style:'color:var(--text2)'},fmtD(wtx.date)+' · '+wtx.name+(wtx.goal_name?' · '+wtx.goal_name:'')),
+         el('span',{style:'color:var(--red)'},'-'+fmt(wtx.amount)+' ₽')
+       ]))
+     }
+     card.appendChild(listEl)
+   }
+
+   p.appendChild(card)
+ }
+
+ function buildSavingsAdjustment(p, d){
+   var card=el('div',{className:'card',style:'margin-bottom:16px'})
+   var header=el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},[
+     el('div',{className:'card-title',style:'margin-bottom:0'},'➖ Корректировка накоплений'),
+     el('span',{style:'font-size:13px;color:var(--text3)'},'Скорректировано: '+fmt(d.adjustmentTotal||0)+' ₽')
+   ])
+   card.appendChild(header)
+
+   var form=el('div',{className:'form-grid'},[
+     el('div',{className:'form-group'},[
+       el('label',{},'Сумма (₽) *'),
+       el('input',{id:'a-amount',type:'number',step:'0.01',min:'0.01',placeholder:'0.00'})
+     ]),
+     el('div',{className:'form-group'},[
+       el('label',{},'Из чего'),
+       (function(){
+         var sel=el('select',{id:'a-source'})
+         sel.appendChild(el('option',{value:''},'— выберите —'))
+         if(d.freeTotal>0) sel.appendChild(el('option',{value:'free'},'Свободные накопления ('+fmt(d.freeTotal)+' ₽)'))
+         if(d.goals){
+           for(var gi=0;gi<d.goals.length;gi++){
+             var g=d.goals[gi]
+             var saved=parseFloat(g.saved||g.current_amount||0)
+             if(saved>0) sel.appendChild(el('option',{value:g.id},g.name+' ('+fmt(saved)+' ₽)'))
+           }
+         }
+         return sel
+       })()
+     ]),
+     el('div',{className:'form-group'},[
+       el('label',{},'Название *'),
+       el('input',{id:'a-name',placeholder:'Например: Ошибка в записи'})
+     ]),
+     el('div',{className:'form-group'},[
+       el('label',{},'Комментарий'),
+       el('input',{id:'a-comment',placeholder:''})
+     ])
+   ])
+
+   form.appendChild(el('div',{className:'form-actions'},[
+     el('button',{className:'primary',onclick:function(){
+       var amount=parseFloat(document.getElementById('a-amount').value)||0
+       var source=document.getElementById('a-source').value
+       var name=document.getElementById('a-name').value
+       var comment=document.getElementById('a-comment').value
+       if(!amount||amount<=0)return toast('Укажите сумму','err')
+       if(!source)return toast('Выберите источник','err')
+       if(!name)return toast('Укажите название','err')
+       var body={amount:amount,name:name,comment:comment,date:new Date().toISOString().slice(0,10)}
+       if(source!=='free')body.goal_id=parseInt(source)
+       api('api/instances/'+curInst.id+'/savings/adjust',{method:'POST',body:JSON.stringify(body)})
+         .then(function(){toast('Скорректировано');loadSavings()})
+         .catch(function(e){toast(e.message,'err')})
+     }},'Уменьшить')
+   ]))
+   
+   card.appendChild(form)
+
+   if(d.adjustments&&d.adjustments.length){
+     var listEl=el('div',{style:'margin-top:12px;padding-top:12px;border-top:1px solid var(--border)'})
+     listEl.appendChild(el('div',{style:'font-size:12px;color:var(--text3);margin-bottom:6px'},'Последние корректировки ('+d.adjustments.length+'):'))
+     for(var ai=0;ai<Math.min(d.adjustments.length,10);ai++){
+       var atx=d.adjustments[ai]
+       listEl.appendChild(el('div',{style:'display:flex;justify-content:space-between;font-size:12px;padding:2px 0'},[
+         el('span',{style:'color:var(--text2)'},fmtD(atx.date)+' · '+atx.name+(atx.goal_name?' · '+atx.goal_name:'')),
+         el('span',{style:'color:var(--red)'},'-'+fmt(atx.amount)+' ₽')
+       ]))
+     }
+     card.appendChild(listEl)
+   }
+
+   p.appendChild(card)
+ }
+
+ function showSavGoalForm(goal){
   var isEdit=!!goal
   var b=el('div',{},[
     el('div',{className:'form-grid'},[
@@ -1221,7 +1771,7 @@ function showSavGoalForm(goal){
         var name=document.getElementById('sg-name').value
         var target=parseFloat(document.getElementById('sg-target').value)
         var current=parseFloat(document.getElementById('sg-current').value)||0
-        var date=document.getElementById('sg-date').value
+        var date=getDateVal('sg-date')
         var comment=document.getElementById('sg-comment').value
         if(!name||!target)return toast('Заполните название и целевую сумму','err')
         var body={name:name,target_amount:target,current_amount:current,target_date:date||null,comment:comment}
@@ -1288,11 +1838,155 @@ function showTransferModal(goal){
   }).catch(function(e){toast(e.message,'err')})
 }
 
+function showSpendGoalModal(goal){
+  var saved=parseFloat(goal.saved||goal.current_amount||0)
+  if(saved<=0)return toast('В этой цели нет средств для траты','err')
+  
+  var b=el('div',{},[
+    el('div',{className:'form-group'},[
+      el('label',{},'Дата расхода'),
+      (function(){var inp=el('input',{id:'spend-date',type:'text',readonly:'',placeholder:'Нажмите для выбора',style:'cursor:pointer'});var pk=dp(inp,{value:new Date()});return el('div',{className:'dp-wrap'},[inp])})()
+    ]),
+    el('div',{className:'form-group'},[
+      el('label',{},'Название расхода'),
+      el('input',{id:'spend-name',placeholder:goal.name,value:goal.name})
+    ]),
+    el('div',{className:'form-group'},[
+      el('label',{},'Сумма расхода (₽) *'),
+      el('input',{id:'spend-amount',type:'number',step:'0.01',max:saved,placeholder:'Доступно: '+fmt(saved)})
+    ]),
+    el('div',{className:'form-group'},[
+      el('label',{},'Комментарий'),
+      el('input',{id:'spend-comment',placeholder:'Потрачено из цели'})
+    ]),
+    el('div',{className:'form-actions'},[
+      el('button',{className:'primary',onclick:function(){
+        var date=getDateVal('spend-date')
+        var amount=parseFloat(document.getElementById('spend-amount').value)
+        var name=document.getElementById('spend-name').value || goal.name
+        var comment=document.getElementById('spend-comment').value || 'Потрачено из цели'
+        if(!amount||amount<=0)return toast('Неверная сумма','err')
+        if(amount>saved)return toast('Сумма превышает накопления ('+fmt(saved)+')','err')
+        api('api/instances/'+curInst.id+'/savings/spend-from-goal',{method:'POST',body:JSON.stringify({goal_id:goal.id,amount:amount,date:date,name:name,comment:comment})})
+          .then(function(){toast('Расход зафиксирован');mclose();loadSavings()})
+      }},'Потратить'),
+      el('button',{className:'ghost',onclick:mclose},'Отмена')
+    ])
+  ])
+  modal('Расход из "'+goal.name+'"',b)
+}
+
 function deleteSavGoal(id){
   confirmModal('Удалить эту цель?',function(){
     api('api/instances/'+curInst.id+'/savings/'+id,{method:'DELETE'})
       .then(function(){toast('Удалено');loadSavings()})
       .catch(function(e){toast(e.message,'err')})
+  })
+}
+
+// ==================== ACCOUNTS ====================
+function loadAccounts(){
+  var p=document.getElementById('pg-accounts')
+  if(!curInst){p.innerHTML='';p.appendChild(el('div',{className:'empty'},[el('div',{className:'ic'},'📦'),el('p',{},'Выберите инстанс')]));return}
+  p.innerHTML=''
+  p.appendChild(el('div',{className:'page-header'},[
+    el('div',{},[el('h1',{},'👛 Счета и кошельки'),el('div',{className:'subtitle'},'Управление счетами и балансами')]),
+    el('button',{className:'primary',onclick:function(){showAccountForm(null)}},'+ Добавить счет')
+  ]))
+
+  var cont = el('div', {id: 'accounts-content'})
+  p.appendChild(cont)
+
+  api('api/instances/'+curInst.id+'/accounts')
+    .then(function(accounts){
+      window.currentAccounts = accounts
+      if(!accounts.length){
+        cont.appendChild(el('div',{className:'empty'},[el('div',{className:'ic'},'📭'),el('p',{},'Нет счетов. Добавьте первый!')]))
+        return
+      }
+      var grid = el('div', {className: 'stats-grid'})
+      for(var i=0;i<accounts.length;i++){
+        var a = accounts[i]
+        var card = el('div', {className: 'stat', style: 'position:relative; display:flex; flex-direction:column; gap:8px'}, [
+          el('div', {className: 'lbl'}, (a.type === 'crypto' ? '🪙 ' : (a.type === 'cash' ? '💵 ' : '🏦 ')) + a.name),
+          el('div', {className: 'val'}, fmt(a.balance) + ' ' + a.currency),
+          el('div', {style: 'display:flex; gap:6px; margin-top:8px'}, [
+            el('button', {className: 'sm ghost', onclick: (function(acc){return function(){showAccountForm(acc)}})(a)}, '✏️ Изменить'),
+            el('button', {className: 'sm danger', onclick: (function(id){return function(){deleteAccount(id)}})(a.id)}, '✕')
+          ])
+        ])
+        grid.appendChild(card)
+      }
+      cont.appendChild(grid)
+    })
+    .catch(function(e){
+      cont.innerHTML='<div class="empty"><p>Ошибка: '+e.message+'</p></div>'
+    })
+}
+
+function showAccountForm(acc){
+  var isEdit = !!acc
+  var b = el('div', {}, [
+    el('div', {className: 'form-grid'}, [
+      el('div', {className: 'form-group'}, [
+        el('label', {}, 'Название *'),
+        (function(){var i=el('input',{id:'acc-name',placeholder:'Тинькофф, Binance...'});if(isEdit)i.value=acc.name;return i})()
+      ]),
+      el('div', {className: 'form-group'}, [
+        el('label', {}, 'Валюта'),
+        (function(){
+          var s=el('select', {id:'acc-currency'}, [
+            el('option', {value: 'RUB'}, 'RUB (₽)'),
+            el('option', {value: 'USD'}, 'USD ($)'),
+            el('option', {value: 'EUR'}, 'EUR (€)'),
+            el('option', {value: 'USDT'}, 'USDT'),
+            el('option', {value: 'BTC'}, 'BTC')
+          ])
+          if(isEdit)s.value=acc.currency||'RUB'
+          return s
+        })()
+      ]),
+      el('div', {className: 'form-group'}, [
+        el('label', {}, 'Тип счета'),
+        (function(){
+          var s=el('select', {id:'acc-type'}, [
+            el('option', {value: 'bank'}, 'Банк'),
+            el('option', {value: 'crypto'}, 'Криптокошелек'),
+            el('option', {value: 'cash'}, 'Наличные')
+          ])
+          if(isEdit)s.value=acc.type||'bank'
+          return s
+        })()
+      ])
+    ]),
+    el('div', {className: 'form-actions'}, [
+      el('button', {className: 'primary', onclick: function(){
+        var name = document.getElementById('acc-name').value
+        var currency = document.getElementById('acc-currency').value
+        var type = document.getElementById('acc-type').value
+        if(!name) return toast('Укажите название', 'err')
+        var body = {name: name, currency: currency, type: type}
+        var p = isEdit 
+          ? api('api/instances/'+curInst.id+'/accounts/'+acc.id, {method: 'PUT', body: JSON.stringify(body)})
+          : api('api/instances/'+curInst.id+'/accounts', {method: 'POST', body: JSON.stringify(body)})
+        
+        p.then(function(){
+          mclose()
+          toast('Сохранено')
+          loadAccounts()
+        }).catch(function(e){toast(e.message, 'err')})
+      }}, isEdit ? 'Сохранить' : 'Создать'),
+      el('button', {className: 'ghost', onclick: mclose}, 'Отмена')
+    ])
+  ])
+  modal(isEdit ? 'Редактировать счет' : 'Новый счет', b)
+}
+
+function deleteAccount(id){
+  confirmModal('Удалить счет? Транзакции, связанные с ним, могут потерять привязку.', function(){
+    api('api/instances/'+curInst.id+'/accounts/'+id, {method: 'DELETE'})
+      .then(function(){toast('Счет удален'); loadAccounts()})
+      .catch(function(e){toast(e.message, 'err')})
   })
 }
 
@@ -1309,12 +2003,19 @@ function loadCredits(){
   var tabs=[{id:'credits',label:'Активные кредиты'},{id:'history',label:'История платежей'}]
   for(var t=0;t<tabs.length;t++){
     var tb=tabs[t]
-    tabWrap.appendChild(el('button',{className:'sm '===(tb.id==='credits'?'primary':'ghost'),onclick:(function(id){return function(){creditsTab=id;loadCredits()}})(tb.id)},tb.label))
+    tabWrap.appendChild(el('button',{className:'sm '+(creditsTab===tb.id?'primary':'ghost'),onclick:(function(id){return function(){creditsTab=id;loadCreditsData();renderTabs()}})(tb.id)},tb.label))
   }
   p.appendChild(tabWrap)
 
   p.appendChild(el('div',{id:'credits-content'}))
-  creditsTab='credits'
+  
+  function renderTabs() {
+    tabWrap.innerHTML=''
+    for(var t=0;t<tabs.length;t++){
+      var tb=tabs[t]
+      tabWrap.appendChild(el('button',{className:'sm '+(creditsTab===tb.id?'primary':'ghost'),onclick:(function(id){return function(){creditsTab=id;loadCreditsData();renderTabs()}})(tb.id)},tb.label))
+    }
+  }
   loadCreditsData()
 }
 
@@ -1383,11 +2084,12 @@ function buildCreditCard(cr){
   var mPayment=parseFloat(cr.monthly_payment)||0
   if(mPayment>0&&remaining>0&&!isPaidOff){
     var today=new Date()
-    var day=today.getDate()
-    var nextDay=day
-    var nextMonth=today.getMonth()
-    var nextYear=today.getFullYear()
-    nextPayment=nextYear+'-'+String(nextMonth+1).padStart(2,'0')+'-'+String(nextDay).padStart(2,'0')
+    var paymentDay = parseInt(cr.payment_day) || 15
+    var nextDate = new Date(today.getFullYear(), today.getMonth(), paymentDay)
+    if (nextDate < today && paymentDay !== today.getDate()) {
+       nextDate.setMonth(nextDate.getMonth() + 1)
+    }
+    nextPayment = nextDate.getFullYear()+'-'+String(nextDate.getMonth()+1).padStart(2,'0')+'-'+String(nextDate.getDate()).padStart(2,'0')
     var isOverdue=false
     var disc=el('div',{style:'margin-bottom:10px;padding:10px 12px;background:'+(!isOverdue?'rgba(99,102,241,.08)':'var(--red-bg)')+';border-radius:var(--rs);display:flex;justify-content:space-between;align-items:center;font-size:13px'},[
       el('span',{},'📅 Ближайший платёж: '+(nextPayment?fmtD(nextPayment):'—')+(isOverdue?' ⚠️ Просрочен':'')),
@@ -1499,6 +2201,10 @@ function showCreditForm(cr){
         (function(){var i=el('input',{id:'cr-monthly',type:'number',step:'0.01',placeholder:'25000'});if(isEdit)i.value=cr.monthly_payment||'';return i})()
       ]),
       el('div',{className:'form-group'},[
+        el('label',{},'День платежа (1-31)'),
+        (function(){var i=el('input',{id:'cr-payday',type:'number',min:'1',max:'31',placeholder:'15'});if(isEdit)i.value=cr.payment_day||'';return i})()
+      ]),
+      el('div',{className:'form-group'},[
         el('label',{},'Период (выдача – окончание)'),
         (function(){
           var hs=el('input',{id:'cr-start',type:'hidden'})
@@ -1540,6 +2246,7 @@ function showCreditForm(cr){
           total_amount:total,
           interest_rate:parseFloat(document.getElementById('cr-rate').value)||0,
           monthly_payment:parseFloat(document.getElementById('cr-monthly').value)||0,
+          payment_day:parseInt(document.getElementById('cr-payday').value)||null,
           start_date:document.getElementById('cr-start').value||null,
           end_date:document.getElementById('cr-end').value||null,
           comment:document.getElementById('cr-comment').value
@@ -1873,7 +2580,7 @@ function loadDash(){
         else periodLabel=d.period.year+' год'
       }
       p.appendChild(el('div',{className:'card',style:'margin-bottom:16px'},[
-        el('div',{className:'stats-grid',style:'margin-bottom:0'},[
+    el('div',{className:'stats-grid nowrap',style:'margin-bottom:0'},[
           el('div',{className:'stat'},[
             el('div',{className:'lbl'},'Доходы'),
             el('div',{className:'val g'},'+'+fmt(s.income.total)+' ₽'),
@@ -1884,10 +2591,34 @@ function loadDash(){
             el('div',{className:'val r'},'-'+fmt(s.expense.total)+' ₽'),
             el('div',{className:'sub'},s.expense.count+' операций')
           ]),
+          (function(){
+            var balGrid = el('div', {className: 'stat', style: 'padding-bottom:8px'}, [el('div',{className:'lbl'},'Баланс счетов')])
+            var currs = s.balancesByCurrency ? Object.keys(s.balancesByCurrency) : []
+            if(!currs.length) {
+               balGrid.appendChild(el('div',{className:'val '+(s.balance>=0?'g':'r')},(s.balance>=0?'+':'')+fmt(s.balance)+' ₽'))
+            } else {
+               var flex = el('div', {style: 'display:flex; flex-direction:column; gap:4px; margin-top:4px'})
+               for(var i=0; i<currs.length; i++) {
+                 var c = currs[i]
+                 var v = s.balancesByCurrency[c]
+                 flex.appendChild(el('div', {style: 'display:flex; justify-content:space-between; font-size:15px; gap: 12px'}, [
+                   el('span', {style: 'color:var(--text2)'}, c),
+                   el('span', {className: v>=0?'g':'r', style:'font-weight:600'}, (v>0?'+':'')+fmt(v))
+                 ]))
+               }
+               balGrid.appendChild(flex)
+            }
+            return balGrid
+          })(),
           el('div',{className:'stat'},[
-            el('div',{className:'lbl'},'Баланс'),
-            el('div',{className:'val '+(s.balance>=0?'g':'r')},(s.balance>=0?'+':'')+fmt(s.balance)+' ₽'),
-            el('div',{className:'sub'},s.balance>=0?'Положительный':'Отрицательный')
+            el('div',{className:'lbl'},'В накопления'),
+            el('div',{className:'val g'},fmt(s.savingsIn.total)+' ₽'),
+            el('div',{className:'sub'},s.savingsIn.count+' операций')
+          ]),
+          el('div',{className:'stat'},[
+            el('div',{className:'lbl'},'В кредиты'),
+            el('div',{className:'val g'},fmt(s.credits.total)+' ₽'),
+            el('div',{className:'sub'},s.credits.count+' операций')
           ])
         ])
       ]))
@@ -2086,7 +2817,10 @@ function loadDash(){
           rows.push(el('tr',{},[
             el('td',{},fmtD(tx.date)),
             el('td',{},el('span',{className:'badge badge-'+tx.type},typeLabel)),
-            el('td',{},tx.name),
+            el('td',{className:'el-name'},[
+              el('div',{},tx.name),
+              tx.comment ? el('div',{style:'font-size:11px;color:var(--text3);margin-top:2px'},tx.comment) : null
+            ]),
             el('td',{},tx.category||'—'),
             el('td',{className:'amt '+cls2},sign+fmt(tx.amount)+' ₽')
           ]))
@@ -2145,7 +2879,7 @@ function loadTx(){
         if(expCats.length){
           var grp=el('optgroup',{label:'Расходы'})
           for(var i=0;i<expCats.length;i++){
-            grp.appendChild(el('option',{value:expCats[i]},expCats[i]))
+            grp.appendChild(el('option',{value:expCats[i].id},expCats[i].name))
           }
           sel.appendChild(grp)
         }
@@ -2153,7 +2887,7 @@ function loadTx(){
         if(incCats.length){
           var grp2=el('optgroup',{label:'Доходы'})
           for(var j=0;j<incCats.length;j++){
-            grp2.appendChild(el('option',{value:incCats[j]},incCats[j]))
+            grp2.appendChild(el('option',{value:incCats[j].id},incCats[j].name))
           }
           sel.appendChild(grp2)
         }
@@ -2201,7 +2935,7 @@ function loadTxData(){
   if(!cont)return
   var params=new URLSearchParams({limit:txLimit,offset:txPage*txLimit})
   if(txFilters.type)params.set('type',txFilters.type)
-  if(txFilters.category)params.set('category',txFilters.category)
+  if(txFilters.category)params.set('category_id',txFilters.category)
   if(txFilters.from)params.set('from',txFilters.from)
   if(txFilters.to)params.set('to',txFilters.to)
   if(txFilters.search)params.set('search',txFilters.search)
@@ -2222,10 +2956,11 @@ function loadTxData(){
         var isPlanned=r.is_planned
         var sign=r.type==='expense'?'-':'+'
         var cls=r.type==='expense'?'exp':'inc'
-        var typeLabel=r.type==='expense'?'доход':'доход'
-        if(r.type==='income')typeLabel='доход'
-        else if(isPlanned)typeLabel='запланировано'
-        else typeLabel=r.type
+        var typeLabel = ''
+        if (r.type === 'income') typeLabel = 'доход'
+        else if (r.type === 'savings') typeLabel = 'накопления'
+        else if (isPlanned) typeLabel = 'запланировано'
+        else typeLabel = 'расход'
         var priceQty=''
         if(r.price&&r.quantity){
           priceQty=fmt(r.price)+' ₽ × '+r.quantity
@@ -2244,7 +2979,10 @@ function loadTxData(){
         rows.push(el('tr',{style:rowStyle},[
           el('td',{},dateDisplay),
           el('td',{},el('span',{className:'badge badge-'+(isPlanned?'expense':r.type)},typeLabel)),
-          el('td',{className:'el-name'},r.name),
+          el('td',{className:'el-name'},[
+            el('div',{},r.name),
+            r.comment ? el('div',{style:'font-size:11px;color:var(--text3);margin-top:2px'},r.comment) : null
+          ]),
           el('td',{},r.category||'—'),
           el('td',{},priceQty),
           el('td',{className:'amt '+cls},sign+fmt(r.amount)+' ₽'),
@@ -2299,6 +3037,11 @@ function buildPagerPages(curr,total){
 var allCategories=[]
 
 function loadCategories(){
+  if(curInst&&curInst.id){
+    return api('api/instances/'+curInst.id+'/categories').then(function(cats){
+      allCategories=cats
+    }).catch(function(e){console.error(e)})
+  }
   return api('api/categories').then(function(cats){
     allCategories=cats
   }).catch(function(e){console.error(e)})
@@ -2307,256 +3050,72 @@ function loadCategories(){
 function getCatsByType(type){
   var result=[]
   for(var i=0;i<allCategories.length;i++){
-    if(allCategories[i].type===type)result.push(allCategories[i].name)
+    if(allCategories[i].type===type)result.push({id:allCategories[i].id,name:allCategories[i].name})
   }
   return result
 }
 
-function showPkcAuth(receipt){
-  window._lastQr=receipt._qr||''
-  var qr=window._lastQr
-
-  function tryFetch(cookies){
-    var h={'Content-Type':'application/json'}
-    var token=localStorage.getItem('token')
-    if(token)h.Authorization='Bearer '+token
-    return api('api/instances/'+curInst.id+'/fetch-receipt',{method:'POST',headers:h,body:JSON.stringify({qr_string:qr,cookies:cookies})})
-  }
-
-  var b=el('div',{},[
-    el('div',{style:'margin-bottom:12px'},[
-      el('p',{style:'font-size:13px;color:var(--text2);margin-bottom:8px'},receipt.message),
-      el('button',{className:'primary',style:'width:100%;margin-bottom:12px',onclick:function(){
-        window.open('https://proverkacheka.com/auth','_pkc_login','width=500,height=650')
-        var step2=document.getElementById('pkc-step2')
-        if(step2)step2.style.display='block'
-      }},'🔑 Открыть proverkacheka.com для входа'),
-      el('div',{id:'pkc-step2',style:'display:none'},[
-        el('ol',{style:'font-size:12px;color:var(--text3);padding-left:16px;margin:0'},[
-          el('li',{},'Войдите через Яндекс в открывшемся окне'),
-          el('li',{},'Нажмите F12 → Application → Cookies → '),
-          el('b',{},'https://proverkacheka.com'),
-          el('li',{},'Скопируйте ВСЕ куки (особенно '),
-          el('code',{style:'background:var(--surface2);padding:1px 4px;border-radius:3px;font-size:11px'},'sessionid2'),
-          el('li',{},'Вставьте в поле ниже и нажмите кнопку')
-        ])
-      ])
-    ]),
-    el('textarea',{id:'pkc-cookies',placeholder:'ENGID=1.1; ENGSID=abc; sessionid2=xyz; ...',style:'width:100%;min-height:50px;padding:8px;border:1px solid var(--border);border-radius:var(--rs);font-family:monospace;font-size:11px;resize:vertical'}),
-    el('button',{className:'primary',style:'width:100%;margin-top:8px',onclick:function(){
-      var cookies=document.getElementById('pkc-cookies').value.trim()
-      if(!cookies){toast('Вставьте куки из браузера','err');return}
-      if(window._qrModal)window._qrModal.remove()
-      tryFetch(cookies).then(function(r){
-        if(r.auth_required){toast('❌ Сессия невалидна. Убедитесь что скопировали куки с proverkacheka.com','err');return}
-        var cb=window._qrCallback
-        if(cb)cb(r)
-      }).catch(function(e){toast('❌ '+e.message,'err')})
-    }},'💾 Сохранить и получить чек')
-  ])
-
-  showQrScanner(function(){})
-  if(window._qrModal)window._qrModal.remove()
-  window._qrModal=modal('🔐 Авторизация на proverkacheka.com',b)
-}
 
 function showQrScanner(onItems){
-  var qrInput=null
-  var statusEl=null
-  var cameraActive=false
-  var videoEl=null
-  var streamRef=null
-  var scanInterval=null
+  var fileInput = document.getElementById('receipt-upload');
+  if (!fileInput) {
+    fileInput = el('input', { id: 'receipt-upload', type: 'file', accept: 'image/*', style: 'display:none' });
+    document.body.appendChild(fileInput);
+    fileInput.onchange = async function(e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      var formData = new FormData();
+      formData.append('receipt', file);
+      
+      var btn = document.getElementById('qr-fetch-btn');
+      if(btn) { btn.disabled = true; btn.textContent = 'Загрузка...'; }
+      
+        try {
+        var r = await fetch(API + 'api/instances/' + curInst.id + '/upload-receipt', {
+          method: 'POST',
+          body: formData,
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        var data = await r.json();
+        if(!r.ok) throw new Error(data.error);
+        
+        window._lastScannedImagePath = data.image_path;
+        var reportBtn = document.getElementById('report-issue-btn');
+        if(reportBtn) reportBtn.style.display = 'inline-block';
+        
+        onItems(data);
+      } catch (err) {
+        window._lastScannedImagePath = file.path; // Note: might not be known if upload failed on server
+        if (data && data.raw) {
+          window._lastScanLogs = (data.stderr || '') + '\n\n' + data.raw;
+          window._lastScannedImagePath = data.image_path || window._lastScannedImagePath;
+        } else {
+          window._lastScanLogs = err.message;
+        }
+        var reportBtn = document.getElementById('report-issue-btn');
+        if(reportBtn) reportBtn.style.display = 'inline-block';
+        toast('Ошибка сканирования: ' + err.message, 'err');
+      } finally {
 
-  function stopCamera(){
-    if(scanInterval){clearInterval(scanInterval);scanInterval=null}
-    if(streamRef){streamRef.getTracks().forEach(function(t){t.stop()});streamRef=null}
-    cameraActive=false
-  }
-
-  function parseQrText(text){
-    if(!text)return null
-    var t=text.trim()
-    if(t.includes('t=')&&t.includes('&s=')&&(t.includes('&fn=')||t.includes('fn=')))return t
-    var params=new URLSearchParams(t)
-    if(params.get('fn')&&params.get('i')&&params.get('fp'))return t
-    return null
-  }
-
-  function startCamera(video){
-    stopCamera()
-    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
-      statusEl.textContent='Камера не поддерживается браузером'
-      statusEl.style.color='var(--red2)'
-      return
-    }
-    navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}).then(function(stream){
-      streamRef=stream
-      video.srcObject=stream
-      video.setAttribute('playsinline','true')
-      video.play()
-      cameraActive=true
-      statusEl.textContent='Наведите камеру на QR-код'
-      statusEl.style.color='var(--text3)'
-
-      if(window.jsQR){
-        scanInterval=setInterval(function(){
-          if(!cameraActive)return
-          if(video.readyState!==video.HAVE_ENOUGH_DATA)return
-          var canvas=document.createElement('canvas')
-          canvas.width=video.videoWidth
-          canvas.height=video.videoHeight
-          var ctx=canvas.getContext('2d')
-          ctx.drawImage(video,0,0,canvas.width,canvas.height)
-          var imageData=ctx.getImageData(0,0,canvas.width,canvas.height)
-          var code=jsQR(imageData.data,imageData.width,imageData.height)
-          if(code&&code.data){
-            var qr=parseQrText(code.data)
-            if(qr){
-              stopCamera()
-              qrInput.value=qr
-              statusEl.textContent='✅ QR-код распознан!'
-              statusEl.style.color='var(--green)'
-            }
-          }
-        },300)
-      }else{
-        statusEl.textContent='Библиотека сканирования не загружена. Вставьте QR-код вручную.'
-        statusEl.style.color='var(--orange)'
+        if(btn) { btn.disabled = false; btn.textContent = '📷 Сканировать чек'; }
       }
-    }).catch(function(){
-      statusEl.textContent='Нет доступа к камере'
-      statusEl.style.color='var(--red2)'
-    })
+    };
   }
-
-  function handleFile(file){
-    if(!file)return
-    if(window.jsQR){
-      var reader=new FileReader()
-      reader.onload=function(e){
-        var img=new Image()
-        img.onload=function(){
-          var canvas=document.createElement('canvas')
-          canvas.width=img.width
-          canvas.height=img.height
-          var ctx=canvas.getContext('2d')
-          ctx.drawImage(img,0,0)
-          var imageData=ctx.getImageData(0,0,canvas.width,canvas.height)
-          var code=jsQR(imageData.data,imageData.width,imageData.height)
-          if(code&&code.data){
-            var qr=parseQrText(code.data)
-            if(qr){
-              qrInput.value=qr
-              statusEl.textContent='✅ QR-код найден на изображении!'
-              statusEl.style.color='var(--green)'
-            }else{
-              statusEl.textContent='⚠️ Код найден, но это не чек формата ФНС'
-              statusEl.style.color='var(--orange)'
-            }
-          }else{
-            statusEl.textContent='❌ QR-код не найден на изображении'
-            statusEl.style.color='var(--red2)'
-          }
-        }
-        img.src=e.target.result
-      }
-      reader.readAsDataURL(file)
-    }else{
-      statusEl.textContent='Библиотека сканирования не загружена'
-      statusEl.style.color='var(--red2)'
-    }
-  }
-
-  var b=el('div',{},[
-    el('div',{style:'margin-bottom:16px'},[
-      el('div',{style:'font-size:13px;color:var(--text3);margin-bottom:8px'},'Вставьте строку QR-кода с чека или отсканируйте камерой'),
-      (function(){
-        qrInput=el('textarea',{id:'qr-input',placeholder:'t=20201017T1923&s=1498.00&fn=9282440300669857&i=25151&fp=1186123459&n=1',style:'min-height:80px;resize:vertical;font-family:monospace;font-size:12px'})
-        return qrInput
-      })()
-    ]),
-    el('div',{style:'display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap'},[
-      el('button',{className:'sm ghost',id:'qr-camera-btn',onclick:function(){
-        var camWrap=document.getElementById('qr-camera-wrap')
-        if(cameraActive){
-          stopCamera()
-          camWrap.style.display='none'
-          document.getElementById('qr-camera-btn').textContent='📷 Камера'
-        }else{
-          camWrap.style.display='block'
-          document.getElementById('qr-camera-btn').textContent='⏹ Стоп'
-          startCamera(document.getElementById('qr-video'))
-        }
-      }},'📷 Камера'),
-      el('label',{className:'sm ghost',style:'cursor:pointer;margin:0',for:'qr-file-input'},'📁 Фото'),
-      el('input',{id:'qr-file-input',type:'file',accept:'image/*',style:'display:none',onchange:function(e){
-        if(e.target.files&&e.target.files[0])handleFile(e.target.files[0])
-      }})
-    ]),
-    el('div',{id:'qr-camera-wrap',style:'display:none;margin-bottom:16px;position:relative'},[
-      (function(){
-        videoEl=el('video',{id:'qr-video',style:'width:100%;border-radius:var(--rs);background:var(--bg)'})
-        return videoEl
-      })()
-    ]),
-    (function(){
-      statusEl=el('div',{id:'qr-status',style:'min-height:20px;font-size:12px;color:var(--text3);margin-bottom:12px'})
-      return statusEl
-    })(),
-    el('div',{className:'form-actions'},[
-      el('button',{className:'primary',id:'qr-fetch-btn',onclick:function(){
-        var raw=qrInput.value
-        var qr=parseQrText(raw)
-        if(!qr){
-          statusEl.textContent='❌ Неверный формат QR-кода. Ожидается строка вида: t=...&s=...&fn=...&i=...&fp=...'
-          statusEl.style.color='var(--red2)'
-          return
-        }
-        stopCamera()
-        var btn=document.getElementById('qr-fetch-btn')
-        btn.disabled=true
-        btn.textContent='Загрузка...'
-        statusEl.textContent='⏳ Получаем данные чека...'
-        statusEl.style.color='var(--text3)'
-           api('api/instances/'+curInst.id+'/fetch-receipt',{method:'POST',body:JSON.stringify({qr_string:qr})})
-          .then(function(receipt){
-            stopCamera()
-            if(window._qrModal)window._qrModal.remove()
-            if(receipt.auth_required){
-              window._lastQr=qr
-              window._qrCallback=onItems
-              showPkcAuth(receipt)
-              return
-            }
-            onItems(receipt)
-          })
-          .catch(function(e){
-            btn.disabled=false
-            btn.textContent='Получить данные'
-            statusEl.textContent='❌ '+e.message
-            statusEl.style.color='var(--red2)'
-          })
-      }},'Получить данные'),
-      el('button',{className:'ghost',onclick:function(){stopCamera();if(window._qrModal)window._qrModal.remove()}},'Отмена')
-    ])
-  ])
-  var qrModal=modal('📷 Сканировать QR-код чека',b)
-  window._qrModal=qrModal
+  fileInput.click();
 }
 
 function showTxForm(tx,prefill){
   var isEdit=!!tx
   var curType=(isEdit&&tx.type)?tx.type:'expense'
-  var items=[{name:'',price:'',quantity:'',amount:'',category:''}]
+  var items=[{name:'',price:'',quantity:'',amount:'',category:'',category_id:''}]
   if(isEdit&&tx.type==='expense'){
-    items=[{id:tx.id,name:tx.name,price:tx.price||'',quantity:tx.quantity||'',amount:tx.amount,category:tx.category||''}]
+    items=[{id:tx.id,name:tx.name,price:tx.price||'',quantity:tx.quantity||'',amount:tx.amount,category:tx.category||'',category_id:tx.category_id||''}]
   } else if(isEdit){
-    items=[{id:tx.id,name:tx.name,price:'',quantity:'',amount:tx.amount,category:''}]
+    items=[{id:tx.id,name:tx.name,price:'',quantity:'',amount:tx.amount,category:'',category_id:tx.category_id||''}]
   } else if(prefill&&prefill.items&&prefill.items.length){
     items=prefill.items.map(function(it){
       var q=parseFloat(it.quantity)||1
-      return{name:(it.name||'').replace(/^\d+[\.\)]\s*/,''),price:it.price||'',quantity:q,amount:parseFloat(it.amount)||(parseFloat(it.price)*q)||'',category:it.category||''}
+      return{name:(it.name||'').replace(/^\d+[\.\)]\s*/,''),price:it.price||'',quantity:q,amount:parseFloat(it.amount)||(parseFloat(it.price)*q)||'',category:it.category||'',category_id:''}
     })
   }
 
@@ -2565,14 +3124,19 @@ function showTxForm(tx,prefill){
   var plannedDateInput=null
   var txDatePicker=null
 
-  function buildCatSelect(idx,selected){
+  function buildCatSelect(idx,selectedId){
     var cats=getCatsByType('expense')
     var opts=[el('option',{value:''},'— Выберите —')]
     for(var i=0;i<cats.length;i++){
-      opts.push(el('option',{value:cats[i]},cats[i]))
+      opts.push(el('option',{value:cats[i].id},cats[i].name))
     }
-    var sel=el('select',{id:'cat-sel-'+idx,onchange:function(){items[idx].category=this.value}},opts)
-    sel.value=selected
+    var sel=el('select',{id:'cat-sel-'+idx,onchange:function(){
+      items[idx].category_id=this.value
+      for(var k=0;k<cats.length;k++){
+        if(String(cats[k].id)===this.value){items[idx].category=cats[k].name;break}
+      }
+    }},opts)
+    sel.value=selectedId
     return sel
   }
 
@@ -2595,12 +3159,14 @@ function showTxForm(tx,prefill){
             hint.innerHTML='<span style="color:'+confColor+';font-size:11px">💡 '+result.category+' ('+result.confidence+'%)</span>'
             hint.style.cursor='pointer'
             items[idx].category=result.category
+            items[idx].category_id=result.category_id||''
             var selAuto=document.getElementById('cat-sel-'+idx)
-            if(selAuto)selAuto.value=result.category
+            if(selAuto&&result.category_id)selAuto.value=result.category_id
             hint.onclick=function(){
               items[idx].category=result.category
+              items[idx].category_id=result.category_id||''
               var sel=document.getElementById('cat-sel-'+idx)
-              if(sel)sel.value=result.category
+              if(sel&&result.category_id)sel.value=result.category_id
             }
           } else {
             hint.innerHTML=''
@@ -2625,7 +3191,7 @@ function showTxForm(tx,prefill){
           el('input',{type:'number',step:'0.01',placeholder:'Сумма *',value:item.amount,className:'tx-amount',oninput:function(){items[idx].amount=this.value;updateTotal()}})
         ]),
         el('div',{className:'form-group',style:'margin-bottom:0'},[
-          buildCatSelect(idx,item.category)
+          buildCatSelect(idx,item.category_id)
         ]),
         el('div',{className:'form-group',style:'margin-bottom:0;align-self:stretch'},[
           el('button',{className:'btn btn-danger sm',style:'height:100%',onclick:function(){removeItem(idx)},title:'Удалить'},'✕')
@@ -2637,8 +3203,11 @@ function showTxForm(tx,prefill){
         var match=hint.match(/💡 ([^ ]+)/)
         if(match){
           items[idx].category=match[1]
+          for(var k=0;k<allCategories.length;k++){
+            if(allCategories[k].name===match[1]){items[idx].category_id=allCategories[k].id;break}
+          }
           var sel=document.getElementById('cat-sel-'+idx)
-          if(sel)sel.value=match[1]
+          if(sel&&items[idx].category_id)sel.value=items[idx].category_id
         }
       }})
     ])
@@ -2668,10 +3237,10 @@ function showTxForm(tx,prefill){
           var cats=getCatsByType('income')
           var opts=[el('option',{value:''},'— Выберите —')]
           for(var i=0;i<cats.length;i++){
-            opts.push(el('option',{value:cats[i]},cats[i]))
+            opts.push(el('option',{value:cats[i].id},cats[i].name))
           }
           var sel=el('select',{id:'inc-cat'},opts)
-          if(isEdit&&tx.type==='income'&&tx.category)sel.value=tx.category
+          if(isEdit&&tx.type==='income'&&tx.category_id)sel.value=tx.category_id
           return sel
         })()
       ])
@@ -2688,7 +3257,7 @@ function showTxForm(tx,prefill){
   }
 
   function addItem(){
-    items.push({name:'',price:'',quantity:'',amount:'',category:''})
+    items.push({name:'',price:'',quantity:'',amount:'',category:'',category_id:''})
     var c=document.getElementById('tx-items-container')
     if(!c)return
     c.appendChild(buildItemRow(items.length-1,items[items.length-1]))
@@ -2707,7 +3276,12 @@ function showTxForm(tx,prefill){
       if(inputs[1])inputs[1].oninput=function(idx){return function(){items[idx].price=this.value;calcRow(idx)}}(i)
       if(inputs[2])inputs[2].oninput=function(idx){return function(){items[idx].quantity=this.value;calcRow(idx)}}(i)
       if(inputs[3])inputs[3].oninput=function(idx){return function(){items[idx].amount=this.value;updateTotal()}}(i)
-      if(sel)sel.onchange=function(idx){return function(){items[idx].category=this.value}}(i)
+      if(sel)sel.onchange=function(idx){return function(){
+        items[idx].category_id=this.value
+        for(var k=0;k<allCategories.length;k++){
+          if(String(allCategories[k].id)===this.value){items[idx].category=allCategories[k].name;break}
+        }
+      }}(i)
       if(hint){
         hint.id='cat-hint-'+i
         hint.onclick=function(idx){return function(){
@@ -2716,8 +3290,11 @@ function showTxForm(tx,prefill){
           var m=h.match(/💡 ([^ ]+)/)
           if(m){
             items[idx].category=m[1]
+            for(var k=0;k<allCategories.length;k++){
+              if(allCategories[k].name===m[1]){items[idx].category_id=allCategories[k].id;break}
+            }
             var sel=document.getElementById('cat-sel-'+idx)
-            if(sel)sel.value=m[1]
+            if(sel&&items[idx].category_id)sel.value=items[idx].category_id
           }
         }}(i)
       }
@@ -2794,6 +3371,13 @@ function showTxForm(tx,prefill){
     if(expenseBlock)expenseBlock.style.display=newType==='expense'?'block':'none'
     if(incomeBlock)incomeBlock.style.display=newType==='income'?'block':'none'
     if(savingsBlock)savingsBlock.style.display=newType==='savings'?'block':'none'
+    var plannedGroup=document.getElementById('planned-group')
+    var plannedDateGroup=document.getElementById('planned-date-group')
+    var txTools=document.getElementById('tx-tools')
+    var isExpense=newType==='expense'
+    if(plannedGroup)plannedGroup.style.display=isExpense?'flex':'none'
+    if(txTools)txTools.style.display=isExpense?'flex':'none'
+    if(plannedDateGroup)plannedDateGroup.style.display=(isExpense&&plannedCb&&plannedCb.checked)?'flex':'none'
   }
 
   var b=el('div',{},[
@@ -2818,7 +3402,7 @@ function showTxForm(tx,prefill){
           return inp
         })()
       ]),
-      el('div',{className:'form-group'},[
+      el('div',{className:'form-group',id:'planned-group'},[
         el('label',{},''),
         el('label',{className:'form-check-lbl',style:'margin-top:21px'},[
           (function(){
@@ -2832,7 +3416,7 @@ function showTxForm(tx,prefill){
           'Запланировать расход'
         ])
       ]),
-      el('div',{className:'form-group',style:isEdit&&tx.is_planned?'':'display:none'},[
+      el('div',{className:'form-group',id:'planned-date-group',style:isEdit&&tx.is_planned?'':'display:none'},[
         el('label',{},'Дата планирования *'),
         (function(){
           var pv=''
@@ -2843,8 +3427,7 @@ function showTxForm(tx,prefill){
         })()
       ])
     ]),
-    isEdit?null:el('div',{style:'display:flex;gap:8px;margin-block:12px;flex-wrap:wrap'},[
-      el('button',{className:'btn btn-success sm',onclick:addItem,type:'button'},'+ Добавить позицию'),
+    isEdit?null:el('div',{id:'tx-tools',style:'display:flex;gap:8px;margin-block:12px;flex-wrap:wrap'},[
       el('button',{className:'sm ghost',onclick:function(){
         showQrScanner(function(receipt){
           if(receipt.date){
@@ -2875,8 +3458,21 @@ function showTxForm(tx,prefill){
               if(merged[nm]){
                 merged[nm].quantity=merged[nm].quantity+q
                 merged[nm].amount=+(merged[nm].amount+a).toFixed(2)
+                if(it.category && !merged[nm].category) merged[nm].category=it.category
               }else{
-                merged[nm]={name:nm,price:it.price||'',quantity:q||1,amount:a||'',category:''}
+                var mappedCatId = ''
+                var cName = (it.category||'').trim().toLowerCase()
+                if (cName) {
+                  var ecats = window._allCats || []
+                  if (typeof getCatsByType === 'function') ecats = getCatsByType('expense')
+                  for (var c = 0; c < ecats.length; c++) {
+                    if (ecats[c].name.toLowerCase() === cName) {
+                      mappedCatId = ecats[c].id
+                      break
+                    }
+                  }
+                }
+                merged[nm]={name:nm,price:it.price||'',quantity:q||1,amount:a||'',category:it.category||'',category_id:mappedCatId}
               }
             }
             items=Object.values(merged)
@@ -2890,12 +3486,33 @@ function showTxForm(tx,prefill){
               if(hint)hint.textContent='Итого: '+fmt(receipt.total)+' ₽'+(receipt.seller?' · '+receipt.seller:'')
             }
             toast('Добавлено '+items.length+' позиций из чека')
-            autoCategorizeItems()
+            autoCategorizeItems(items)
           }else{
             toast('Чек пуст — позиции не найдены','err')
           }
         })
-      },type:'button'},'📷 Сканировать чек')
+      },type:'button'},'📷 Сканировать чек'),
+      el('button',{className:'sm danger',style:'display:none',id:'report-issue-btn',onclick:function(){
+         var btn = this;
+         btn.disabled = true;
+         btn.textContent = 'Отправка...';
+         api('api/instances/'+curInst.id+'/report-scanner-issue', {
+           method: 'POST',
+           body: JSON.stringify({
+             description: "Автоматический репорт ошибки сканирования", 
+             image_path: window._lastScannedImagePath,
+             logs: window._lastScanLogs
+           })
+         }).then(function(){ 
+            toast('Отчет и фото отправлены разработчику');
+            btn.style.display = 'none';
+         })
+         .catch(function(e){ 
+            toast('Ошибка отправки: '+e.message, 'err');
+            btn.disabled = false;
+            btn.textContent = '⚠️ Сообщить об ошибке';
+         })
+      }},'⚠️ Сообщить об ошибке')
     ]),
     el('div',{id:'expense-block'},[
       el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'},[
@@ -2911,7 +3528,16 @@ function showTxForm(tx,prefill){
       ]),
       el('style',{},'@media(max-width:768px){.tx-items-header{display:none!important}}'),
       el('div',{id:'tx-items-container'}),
-      el('div',{id:'tx-total',style:'text-align:right;font-weight:600;font-size:15px;margin-top:12px',textContent:'Итого: 0.00 ₽'})
+      isEdit?null:el('button',{className:'btn btn-success sm',style:'margin-top:8px;margin-bottom:4px',onclick:addItem,type:'button'},'+ Добавить позицию'),
+      el('div',{id:'tx-total',style:'text-align:right;font-weight:600;font-size:15px;margin-top:12px',textContent:'Итого: 0.00 ₽'}),
+      el('div',{className:'form-group',style:'margin-top:16px'},[
+        el('label',{},'Комментарий к чеку / расходу'),
+        (function(){
+          var inp=el('input',{id:'tx-common-comment',placeholder:'Необязательно'})
+          if(isEdit&&tx&&tx.comment)inp.value=tx.comment
+          return inp
+        })()
+      ])
     ]),
     el('div',{id:'income-block',style:'display:none'},[
       buildIncomeRow()
@@ -2921,7 +3547,7 @@ function showTxForm(tx,prefill){
     ]),
     el('div',{className:'form-actions'},[
       el('button',{className:'primary',onclick:function(){
-        var date=document.getElementById('tx-date').value
+        var date=getDateVal('tx-date')
         var type=document.getElementById('tx-type').value
         if(!date)return toast('Укажите дату','err')
         if(type==='income'){
@@ -2930,7 +3556,7 @@ function showTxForm(tx,prefill){
           var catSelect=document.getElementById('inc-cat')
           var category=catSelect?catSelect.value:''
           if(!name||!amount)return toast('Заполните название и сумму','err')
-          var body={name:name,type:'income',date:date,amount:amount,category:category}
+          var body={name:name,type:'income',date:date,amount:amount,category_id:category||undefined}
           var method='POST'
           var path='api/instances/'+curInst.id+'/transactions'
           if(isEdit){method='PUT';path+='/'+tx.id}
@@ -2958,11 +3584,13 @@ function showTxForm(tx,prefill){
             .catch(function(e){toast(e.message,'err')})
         } else {
           var isPlanned=plannedCb?plannedCb.checked:false
-          var plannedDate=plannedDateInput?plannedDateInput.value:null
+          var plannedDate=plannedDateInput?getDateVal(plannedDateInput):null
           var toSave=[]
+          var cmtInput=document.getElementById('tx-common-comment')
+          var commonComment=cmtInput?cmtInput.value:''
           for(var i=0;i<items.length;i++){
             if(!items[i].name||!items[i].amount)continue
-            toSave.push({id:items[i].id||undefined,name:items[i].name,type:'expense',date:isPlanned&&plannedDate?plannedDate:date,price:parseFloat(items[i].price)||null,quantity:parseFloat(items[i].quantity)||null,amount:parseFloat(items[i].amount),category:items[i].category,is_planned:isPlanned,planned_date:plannedDate||null,receipt_key:window._lastReceiptKey||null})
+            toSave.push({id:items[i].id||undefined,name:items[i].name,type:'expense',date:isPlanned&&plannedDate?plannedDate:date,price:parseFloat(items[i].price)||null,quantity:parseFloat(items[i].quantity)||null,amount:parseFloat(items[i].amount),category_id:items[i].category_id||undefined,category:items[i].category||undefined,is_planned:isPlanned,planned_date:plannedDate||null,receipt_key:window._lastReceiptKey||null,comment:commonComment})
           }
           if(!toSave.length)return toast('Заполните хотя бы одну позицию','err')
           if(isEdit&&tx.type==='expense'&&items.length===1&&items[0].id){
@@ -2985,22 +3613,7 @@ function showTxForm(tx,prefill){
 
   var _o=modal(isEdit?'Редактировать':'Новая транзакция',b)
   fixModalTop(_o)
-  var expenseBlock=document.getElementById('expense-block')
-  var incomeBlock=document.getElementById('income-block')
-  var savingsBlock=document.getElementById('savings-block')
-  if(curType==='income'){
-    if(expenseBlock)expenseBlock.style.display='none'
-    if(incomeBlock)incomeBlock.style.display='block'
-    if(savingsBlock)savingsBlock.style.display='none'
-  }else if(curType==='savings'){
-    if(expenseBlock)expenseBlock.style.display='none'
-    if(incomeBlock)incomeBlock.style.display='none'
-    if(savingsBlock)savingsBlock.style.display='block'
-  }else{
-    if(expenseBlock)expenseBlock.style.display='block'
-    if(incomeBlock)incomeBlock.style.display='none'
-    if(savingsBlock)savingsBlock.style.display='none'
-  }
+  switchType(curType)
   setTimeout(function(){
     renderItems()
     if(prefill&&prefill.items&&prefill.items.length){
@@ -3009,7 +3622,7 @@ function showTxForm(tx,prefill){
       toast('Добавлено '+items.length+' позиций из чека')
     }
     // Auto-categorize items without category
-    autoCategorizeItems()
+    autoCategorizeItems(items)
   },100)
   function calcTotal(){
     var s=0
@@ -3018,19 +3631,20 @@ function showTxForm(tx,prefill){
   }
 }
 
-function autoCategorizeItems(){
+function autoCategorizeItems(itemsToCategorize){
   var pending=0
-  for(var i=0;i<items.length;i++){
-    if(items[i].category)continue
-    var name=items[i].name
+  for(var i=0;i<itemsToCategorize.length;i++){
+    if(itemsToCategorize[i].category_id)continue
+    var name=itemsToCategorize[i].name
     if(!name||name.length<2)continue
     pending++
     api('api/instances/'+curInst.id+'/suggest-category?name='+encodeURIComponent(name))
       .then((function(idx){return function(result){
         if(result.category&&result.confidence>=50){
-          items[idx].category=result.category
+          itemsToCategorize[idx].category=result.category
+          itemsToCategorize[idx].category_id=result.category_id||''
           var sel=document.getElementById('cat-sel-'+idx)
-          if(sel)sel.value=result.category
+          if(sel&&result.category_id)sel.value=result.category_id
         }
       }})(i))
       .catch(function(){})
@@ -3073,9 +3687,9 @@ function init(){
       .then(function(u){user=u;return loadCategories()})
       .then(function(){return loadInsts()})
       .then(function(){if(instances.length){curInst=instances[0];renderApp()}else{renderInstanceGate()}})
-      .catch(function(){token=null;localStorage.removeItem('token');renderLogin()})
+      .catch(function(){token=null;localStorage.removeItem('token');renderLanding()})
   } else {
-    renderLogin()
+    renderLanding()
   }
 }
 init()

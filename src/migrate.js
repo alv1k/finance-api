@@ -51,7 +51,6 @@ const statements = [
   `ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_type_check`,
   `ALTER TABLE transactions ADD CONSTRAINT transactions_type_check CHECK (type IN ('expense', 'income', 'savings'))`,
   `CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date)`,
-  `CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category)`,
   `CREATE INDEX IF NOT EXISTS idx_transactions_instance_id ON transactions(instance_id)`,
   `CREATE INDEX IF NOT EXISTS idx_instance_members_user_id ON instance_members(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_instance_members_instance_id ON instance_members(instance_id)`,
@@ -59,35 +58,12 @@ const statements = [
 
   `CREATE TABLE IF NOT EXISTS categories (
     id         SERIAL PRIMARY KEY,
-    name       TEXT UNIQUE NOT NULL,
+    name       TEXT NOT NULL,
     type       TEXT NOT NULL CHECK (type IN ('expense', 'income', 'savings')),
+    instance_id INTEGER REFERENCES instances(id) ON DELETE CASCADE,
+    is_default  BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`,
-
-  `INSERT INTO categories (name, type) VALUES
-    ('продукты', 'expense'),
-    ('ЖКУ', 'expense'),
-    ('автомобиль', 'expense'),
-    ('здоровье', 'expense'),
-    ('сладости', 'expense'),
-    ('прочие нужды', 'expense'),
-    ('развлечения', 'expense'),
-    ('связь', 'expense'),
-    ('подарки', 'expense'),
-    ('одежда', 'expense'),
-    ('питомцы', 'expense'),
-    ('огород', 'expense'),
-    ('хобби', 'expense'),
-    ('готовая еда', 'expense'),
-    ('доставка товаров', 'expense'),
-    ('благотворительность', 'expense'),
-    ('без классификации', 'expense'),
-    ('проезд в автобусах', 'expense'),
-    ('зп Айсен', 'income'),
-    ('зп Алена', 'income'),
-    ('такси', 'income'),
-    ('другой доход', 'income')
-  ON CONFLICT (name) DO NOTHING`,
 
   `CREATE TABLE IF NOT EXISTS savings_goals (
     id            SERIAL PRIMARY KEY,
@@ -100,11 +76,10 @@ const statements = [
     created_at    TIMESTAMPTZ DEFAULT NOW()
   )`,
 
-  `INSERT INTO categories (name, type) VALUES ('накопления', 'savings') ON CONFLICT (name) DO NOTHING`,
-  `INSERT INTO categories (name, type) VALUES ('кредиты', 'expense') ON CONFLICT (name) DO NOTHING`,
-
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS goal_id INTEGER`,
-  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS savings_type TEXT DEFAULT 'free' CHECK (savings_type IN ('free', 'goal'))`,
+  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS savings_type TEXT DEFAULT 'free'`,
+  `ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_savings_type_check`,
+  `ALTER TABLE transactions ADD CONSTRAINT transactions_savings_type_check CHECK (savings_type IN ('free', 'goal', 'withdrawal', 'adjustment'))`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_planned BOOLEAN DEFAULT FALSE`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS planned_date DATE`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS receipt_key TEXT DEFAULT NULL`,
@@ -126,6 +101,7 @@ const statements = [
     created_at       TIMESTAMPTZ DEFAULT NOW()
   )`,
   `CREATE INDEX IF NOT EXISTS idx_credits_instance_id ON credits(instance_id)`,
+  `ALTER TABLE credits ADD COLUMN IF NOT EXISTS payment_day INTEGER`,
 
   `CREATE TABLE IF NOT EXISTS credit_payments (
     id              SERIAL PRIMARY KEY,
@@ -152,6 +128,33 @@ const statements = [
     updated_at  TIMESTAMPTZ DEFAULT NOW()
   )`,
   `CREATE INDEX IF NOT EXISTS idx_shopping_items_instance ON shopping_items(instance_id)`,
+
+  `CREATE TABLE IF NOT EXISTS category_hidden (
+    instance_id INTEGER NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+    category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    PRIMARY KEY (instance_id, category_id)
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS user_actions_log (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    instance_id INTEGER REFERENCES instances(id) ON DELETE CASCADE,
+    action_type TEXT NOT NULL,
+    entity_type TEXT,
+    entity_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS accounts (
+    id SERIAL PRIMARY KEY,
+    instance_id INTEGER REFERENCES instances(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    currency TEXT DEFAULT 'RUB',
+    type TEXT DEFAULT 'card',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL`
 ]
 
 try {
@@ -159,6 +162,96 @@ try {
     await pool.query(sql)
   }
   console.log('Migration complete')
+
+  // ============ Category normalization (idempotent) ============
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+
+    await client.query('ALTER TABLE categories ADD COLUMN IF NOT EXISTS instance_id INTEGER REFERENCES instances(id) ON DELETE CASCADE')
+    await client.query('ALTER TABLE categories ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT FALSE')
+    await client.query('ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_name_key')
+    await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_inst_name ON categories (COALESCE(instance_id, 0), name)')
+    await client.query('UPDATE categories SET is_default = TRUE WHERE instance_id IS NULL AND is_default = FALSE')
+
+    const defaultCats = [
+      ['продукты', 'expense'], ['ЖКУ', 'expense'], ['автомобиль', 'expense'], ['здоровье', 'expense'],
+      ['сладости', 'expense'], ['прочие нужды', 'expense'], ['развлечения', 'expense'], ['связь', 'expense'],
+      ['подарки', 'expense'], ['одежда', 'expense'], ['питомцы', 'expense'], ['огород', 'expense'],
+      ['хобби', 'expense'], ['готовая еда', 'expense'], ['доставка товаров', 'expense'], ['благотворительность', 'expense'],
+      ['без классификации', 'expense'], ['проезд в автобусах', 'expense'], ['зп жена', 'income'], ['зп муж', 'income'],
+      ['такси', 'income'], ['другой доход', 'income'], ['накопления', 'savings'], ['кредиты', 'expense'],
+      ['Цели', 'savings'], ['Свободные накопления', 'savings'],
+    ]
+    for (const [name, type] of defaultCats) {
+      await client.query(
+        `INSERT INTO categories (name, type, is_default)
+         SELECT $1, $2, TRUE
+         WHERE NOT EXISTS (SELECT 1 FROM categories WHERE instance_id IS NULL AND name = $1)`,
+        [name, type]
+      )
+    }
+
+    await client.query('ALTER TABLE transactions ADD COLUMN IF NOT EXISTS category_id INTEGER REFERENCES categories(id)')
+
+    const { rows: col } = await client.query(
+      `SELECT 1 FROM information_schema.columns WHERE table_name = 'transactions' AND column_name = 'category'`
+    )
+    if (col.length) {
+      const { rows: distinct } = await client.query(
+        `SELECT DISTINCT instance_id, category, type FROM transactions WHERE category IS NOT NULL AND category != ''`
+      )
+      for (const row of distinct) {
+        const { instance_id, category, type } = row
+        const g = await client.query('SELECT id FROM categories WHERE instance_id IS NULL AND name = $1', [category])
+        let gid
+        if (g.rows.length) {
+          gid = g.rows[0].id
+        } else {
+          const ins = await client.query(
+            'INSERT INTO categories (name, type, is_default) VALUES ($1, $2, TRUE) RETURNING id',
+            [category, type]
+          )
+          gid = ins.rows[0].id
+        }
+        if (instance_id === null) {
+          await client.query(
+            'UPDATE transactions SET category_id = $1 WHERE instance_id IS NULL AND category = $2',
+            [gid, category]
+          )
+          continue
+        }
+        const cp = await client.query('SELECT id FROM categories WHERE instance_id = $1 AND name = $2', [instance_id, category])
+        let copyId
+        if (cp.rows.length) {
+          copyId = cp.rows[0].id
+        } else {
+          const ins = await client.query(
+            'INSERT INTO categories (name, type, instance_id, is_default) VALUES ($1, $2, $3, FALSE) RETURNING id',
+            [category, type, instance_id]
+          )
+          copyId = ins.rows[0].id
+        }
+        await client.query(
+          'UPDATE transactions SET category_id = $1 WHERE instance_id = $2 AND category = $3',
+          [copyId, instance_id, category]
+        )
+      }
+
+      await client.query(`UPDATE transactions SET category_id = NULL WHERE category IS NULL OR category = ''`)
+    await client.query(`ALTER TABLE transactions DROP COLUMN IF EXISTS category`)
+    await client.query(`DROP INDEX IF EXISTS idx_transactions_category`)
+    }
+
+    await client.query('COMMIT')
+    console.log('Category migration complete')
+
+  } catch (err) {
+    await client.query('ROLLBACK')
+    console.error('Category migration failed:', err.message)
+  } finally {
+    client.release()
+  }
 } catch (err) {
   console.error('Migration failed:', err.message)
 } finally {

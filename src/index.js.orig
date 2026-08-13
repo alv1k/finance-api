@@ -525,26 +525,13 @@ app.post('/api/instances/:instanceId/transactions/:id/execute', authMiddleware, 
 app.put('/api/instances/:instanceId/transactions/:id', authMiddleware, instanceMiddleware, async (req, res) => {
   try {
     const { name, date, type, price, quantity, amount, category, category_id, comment, is_planned, planned_date } = req.body
-    
-    const { rows: txRows } = await pool.query('SELECT receipt_key FROM transactions WHERE id = $1 AND instance_id = $2', [req.params.id, req.instanceId])
-    if (!txRows.length) return res.status(404).json({ error: 'Не найдено' })
-    const rKey = txRows[0].receipt_key
-
     const finalCategoryId = category_id || (category ? await resolveCategoryId(pool, req.instanceId, category, type) : null)
     const { rows } = await pool.query(
       `UPDATE transactions SET name=$1, date=$2, type=$3, price=$4, quantity=$5, amount=$6, category_id=$7, comment=$8, is_planned=$9, planned_date=$10
        WHERE id=$11 AND instance_id=$12 RETURNING *`,
       [name, date, type, price, quantity, amount, finalCategoryId, comment, is_planned || false, planned_date || null, req.params.id, req.instanceId]
     )
-    
-    if (rKey && rKey.startsWith('spend-goal-')) {
-      await pool.query(
-        `UPDATE transactions SET date=$1, amount=$2 
-         WHERE receipt_key=$3 AND instance_id=$4 AND id != $5`,
-        [date, amount, rKey, req.instanceId, req.params.id]
-      )
-    }
-
+    if (!rows.length) return res.status(404).json({ error: 'Не найдено' })
     res.json(rows[0])
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -553,17 +540,10 @@ app.put('/api/instances/:instanceId/transactions/:id', authMiddleware, instanceM
 
 app.delete('/api/instances/:instanceId/transactions/:id', authMiddleware, instanceMiddleware, async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT receipt_key FROM transactions WHERE id = $1 AND instance_id = $2', [req.params.id, req.instanceId])
-    if (!rows.length) return res.status(404).json({ error: 'Не найдено' })
-    const rKey = rows[0].receipt_key
-    let rowCount = 0
-    if (rKey && rKey.startsWith('spend-goal-')) {
-      const resDel = await pool.query('DELETE FROM transactions WHERE receipt_key = $1 AND instance_id = $2', [rKey, req.instanceId])
-      rowCount = resDel.rowCount
-    } else {
-      const resDel = await pool.query('DELETE FROM transactions WHERE id = $1 AND instance_id = $2', [req.params.id, req.instanceId])
-      rowCount = resDel.rowCount
-    }
+    const { rowCount } = await pool.query(
+      'DELETE FROM transactions WHERE id = $1 AND instance_id = $2',
+      [req.params.id, req.instanceId]
+    )
     if (!rowCount) return res.status(404).json({ error: 'Не найдено' })
     res.json({ ok: true })
   } catch (err) {
@@ -1057,51 +1037,6 @@ app.post('/api/instances/:instanceId/savings/transfer', authMiddleware, instance
     res.status(500).json({ error: err.message })
   }
 })
-
-// Spend directly from goal (creates withdrawal + expense)
-app.post('/api/instances/:instanceId/savings/spend-from-goal', authMiddleware, instanceMiddleware, async (req, res) => {
-  try {
-    const { goal_id, amount, date, name, comment } = req.body
-    if (!goal_id || !amount || parseFloat(amount) <= 0) {
-      return res.status(400).json({ error: 'Неверные данные' })
-    }
-    const spendAmount = parseFloat(amount)
-    const txDate = date || new Date().toISOString()
-    
-    // Get goal info
-    const { rows: goalRows } = await pool.query('SELECT * FROM savings_goals WHERE id = $1 AND instance_id = $2', [goal_id, req.instanceId])
-    if (!goalRows.length) return res.status(404).json({ error: 'Цель не найдена' })
-    const goal = goalRows[0]
-    
-    const txName = name || goal.name
-    const txComment = comment || 'Потрачено из цели'
-
-    const rKey = 'spend-goal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
-
-    // 1. Withdraw from goal
-    const wId = 'sav-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
-    const savCatId = await resolveCategoryId(pool, req.instanceId, 'Цели', 'savings')
-    await pool.query(
-      `INSERT INTO transactions (id, name, date, type, amount, category_id, comment, instance_id, goal_id, savings_type, receipt_key)
-       VALUES ($1, $2, $3, 'savings', $4, $5, $6, $7, $8, 'withdrawal', $9)`,
-      [wId, 'Изъятие на покупку: ' + goal.name, txDate, spendAmount, savCatId, '', req.instanceId, goal_id, rKey]
-    )
-
-    // 2. Create expense
-    const eId = 'exp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
-    const expCatId = await resolveCategoryId(pool, req.instanceId, 'Цели', 'expense')
-    await pool.query(
-      `INSERT INTO transactions (id, name, date, type, amount, category_id, comment, instance_id, receipt_key)
-       VALUES ($1, $2, $3, 'expense', $4, $5, $6, $7, $8)`,
-      [eId, txName, txDate, spendAmount, expCatId, txComment, req.instanceId, rKey]
-    )
-
-    res.json({ ok: true })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
 
 app.post('/api/instances/:instanceId/savings', authMiddleware, instanceMiddleware, async (req, res) => {
   try {

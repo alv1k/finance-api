@@ -1,0 +1,15 @@
+1. Add 'Счета и кошельки' to sidebar (id: pg-accounts, icon: 💳).
+2. Create `renderAccounts()` function:
+   - fetch `/api/instances/:instanceId/accounts`
+   - display grid of accounts
+   - show `+ Добавить счет` button -> opens modal
+3. Create `showAccountForm(acc)` function:
+   - name, currency (RUB, USD, EUR, USDT, BTC, etc), type (bank, crypto, cash).
+   - POST / PUT to accounts API.
+4. Modify `showTransactionForm(tx)`:
+   - fetch accounts.
+   - add `<select>` for `account_id`.
+   - if `tx` is edit, set `account_id`.
+5. Modify `renderDashboard()`:
+   - fetch accounts.
+   - show total balances per currency somewhere (e.g. at the top instead of the generic "balance" calculation).

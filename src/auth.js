@@ -24,14 +24,14 @@ export function verifyToken(token) {
 export function authMiddleware(req, res, next) {
   const auth = req.headers.authorization
   if (!auth || !auth.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing token' })
+    return res.status(401).json({ error: 'Отсутствует токен' })
   }
   try {
     const payload = verifyToken(auth.slice(7))
     req.user = payload
     next()
   } catch {
-    return res.status(401).json({ error: 'Invalid token' })
+    return res.status(401).json({ error: 'Неверный токен' })
   }
 }
 
@@ -47,7 +47,7 @@ export function optionalAuthMiddleware(req, res, next) {
 
 export function adminMiddleware(req, res, next) {
   if (!req.user?.is_admin) {
-    return res.status(403).json({ error: 'Admin access required' })
+    return res.status(403).json({ error: 'Требуются права администратора' })
   }
   next()
 }
@@ -55,14 +55,14 @@ export function adminMiddleware(req, res, next) {
 export async function instanceMiddleware(req, res, next) {
   const instanceId = req.params.instanceId || req.query.instance_id || req.body.instance_id
   if (!instanceId) {
-    return res.status(400).json({ error: 'instance_id required' })
+    return res.status(400).json({ error: 'Требуется instance_id' })
   }
   const { rows } = await pool.query(
     'SELECT role FROM instance_members WHERE instance_id = $1 AND user_id = $2',
     [instanceId, req.user.id]
   )
   if (!rows.length) {
-    return res.status(403).json({ error: 'Not a member of this instance' })
+    return res.status(403).json({ error: 'Вы не являетесь участником этого инстанса' })
   }
   req.instanceId = parseInt(instanceId)
   req.memberRole = rows[0].role
@@ -71,7 +71,7 @@ export async function instanceMiddleware(req, res, next) {
 
 export async function instanceOwnerMiddleware(req, res, next) {
   if (req.memberRole !== 'owner') {
-    return res.status(403).json({ error: 'Owner access required' })
+    return res.status(403).json({ error: 'Требуются права владельца' })
   }
   next()
 }
