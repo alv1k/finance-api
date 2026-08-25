@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Finance API — Admin Panel</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="shortcut icon" type="image/png" href="/favicon.png">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh;line-height:1.5}
@@ -177,25 +179,30 @@ function renderDashboard(container){
     el('div',{className:'tabs'},[
       el('button',{className:'tab active',onclick:function(){switchTab('users')}},'Users'),
       el('button',{className:'tab',onclick:function(){switchTab('instances')}},'Instances'),
+      el('button',{className:'tab',onclick:function(){switchTab('donations')}},'🎁 Донаты (Вечные доступы)')
     ]),
     el('div',{id:'panel-users',className:'panel active'}),
-    el('div',{id:'panel-instances',className:'panel'})
+    el('div',{id:'panel-instances',className:'panel'}),
+    el('div',{id:'panel-donations',className:'panel'})
   ])
   container.appendChild(c)
   loadStats()
   loadUsers()
   loadInstances()
+  loadDonations()
 }
 
 function switchTab(name){
   var tabs=document.querySelectorAll('.tab')
   for(var i=0;i<tabs.length;i++){
-    var isActive=(name==='users'&&i===0)||(name==='instances'&&i===1)
+    var isActive=(name==='users'&&i===0)||(name==='instances'&&i===1)||(name==='donations'&&i===2)
     tabs[i].classList.toggle('active',isActive)
   }
   document.getElementById('panel-users').classList.toggle('active',name==='users')
   document.getElementById('panel-instances').classList.toggle('active',name==='instances')
+  document.getElementById('panel-donations').classList.toggle('active',name==='donations')
 }
+
 
 function loadStats(){
   api('api/admin/stats').then(function(s){
@@ -225,22 +232,59 @@ function loadUsers(){
     var rows=[]
     for(var i=0;i<users.length;i++){
       var u=users[i]
-      var actions=[el('button',{className:'btn btn-toggle',onclick:(function(x){return function(){toggleAdmin(x)}})(u)},u.is_admin?'Revoke':'Grant')]
+      var planBadgeClass = u.is_admin ? 'badge-admin' : (u.plan === 'family' ? 'badge-owner' : (u.plan === 'pro' ? 'badge-user' : 'badge-member'))
+      var planBadgeText = u.is_admin ? '👑 UNLIMITED' : (u.plan || 'free').toUpperCase()
+      var actions=[
+        el('button',{className:'btn btn-ghost',onclick:(function(x){return function(){editUserPlan(x)}})(u)},'Тариф'),
+        el('button',{className:'btn btn-toggle',onclick:(function(x){return function(){toggleAdmin(x)}})(u)},u.is_admin?'Revoke':'Grant')
+      ]
       if(u.id!==currentUser.id)actions.push(el('button',{className:'btn btn-danger',onclick:(function(id){return function(){deleteUser(id)}})(u.id)},'Delete'))
       rows.push(el('tr',{},[
         el('td',{},String(u.id)),
         el('td',{},u.username),
         el('td',{},el('span',{className:'badge '+(u.is_admin?'badge-admin':'badge-user')},u.is_admin?'admin':'user')),
+        el('td',{},el('span',{className:'badge '+planBadgeClass},planBadgeText)),
         el('td',{},new Date(u.created_at).toLocaleDateString()),
         el('td',{},actions)
       ]))
     }
     p.innerHTML=''
     p.appendChild(el('table',{},[
-      el('thead',{},el('tr',{},[el('th',{},'ID'),el('th',{},'Username'),el('th',{},'Role'),el('th',{},'Created'),el('th',{},'Actions')])),
+      el('thead',{},el('tr',{},[el('th',{},'ID'),el('th',{},'Username'),el('th',{},'Role'),el('th',{},'Plan'),el('th',{},'Created'),el('th',{},'Actions')])),
       el('tbody',{},rows)
     ]))
   }).catch(function(e){console.error(e)})
+}
+
+function editUserPlan(user){
+  var planSelect = el('select',{style:'width:100%;margin-bottom:12px;padding:8px;background:#0f1117;color:#fff;border:1px solid #374151;border-radius:6px'},[
+    el('option',{value:'free'},'Free Тариф (базовый)'),
+    el('option',{value:'pro'},'PRO Личный (190 ₽/мес)'),
+    el('option',{value:'family'},'Семья & Бизнес (390 ₽/мес)')
+  ])
+  planSelect.value = user.plan || 'free'
+
+  var body = el('div',{},[
+    el('p',{style:'margin-bottom:12px;color:#94a3b8;font-size:13px'},'Изменение тарифного плана для пользователя ' + user.username),
+    planSelect,
+    el('div',{style:'display:flex;justify-content:flex-end;gap:8px'},[
+      el('button',{className:'btn btn-ghost',onclick:mclose},'Отмена'),
+      el('button',{className:'btn btn-success',onclick:function(){
+        api('api/admin/users/'+user.id+'/plan',{
+          method:'PUT',
+          body:JSON.stringify({ plan: planSelect.value })
+        }).then(function(){
+          mclose()
+          toast('Тариф обновлен!','ok')
+          loadUsers()
+        }).catch(function(err){
+          toast(err.message,'err')
+        })
+      }},'Сохранить')
+    ])
+  ])
+
+  modal('Управление тарифом', body)
 }
 
 function toggleAdmin(user){
@@ -407,13 +451,73 @@ function removeMember(instId,userId){
 }
 
 // ==================== INIT ====================
+// ==================== DONATIONS MANAGEMENT ====================
+function loadDonations(){
+  api('api/admin/donations').then(function(items){
+    var p=document.getElementById('panel-donations')
+    if(!items || !items.length){
+      p.innerHTML=''
+      p.appendChild(el('div',{className:'empty'},'Пока нет заявок на донат'))
+      return
+    }
+    var rows=[]
+    for(var i=0;i<items.length;i++){
+      (function(d){
+        var approveBtn = el('button',{
+          className:'btn btn-success',
+          onclick: function(){ approveDonation(d.id, d.desired_username) }
+        },'✅ Выдать аккаунт')
+
+        rows.push(el('tr',{},[
+          el('td',{},String(d.id)),
+          el('td',{style:'font-weight:600'},d.desired_username),
+          el('td',{},d.contact_info),
+          el('td',{style:'color:#4ade80;font-weight:600'},d.donation_amount ? d.donation_amount + ' ₽' : 'Не указана'),
+          el('td',{},d.comment || '—'),
+          el('td',{},new Date(d.created_at).toLocaleDateString()),
+          el('td',{},approveBtn)
+        ]))
+      })(items[i])
+    }
+    p.innerHTML=''
+    p.appendChild(el('table',{},[
+      el('thead',{},el('tr',{},[
+        el('th',{},'ID'),
+        el('th',{},'Желаемый логин'),
+        el('th',{},'Контакт'),
+        el('th',{},'Сумма доната'),
+        el('th',{},'Комментарий'),
+        el('th',{},'Дата'),
+        el('th',{},'Действие')
+      ])),
+      el('tbody',{},rows)
+    ]))
+  }).catch(function(e){ console.error(e) })
+}
+
+function approveDonation(id, username){
+  if(!confirm('Подтверждаете получение доната? Будет автоматически создан постоянный пользователь "' + username + '" со случайным паролем.')) return
+  api('api/admin/donations/' + id + '/approve', {method:'POST'})
+    .then(function(res){
+      alert('🎉 Аккаунт успешно создан!\n\nЛогин: ' + res.credentials.username + '\nПароль: ' + res.credentials.password + '\n\nДанные дублированы вам в Telegram!')
+      loadDonations()
+      loadUsers()
+      loadStats()
+    })
+    .catch(function(e){
+      alert('Ошибка: ' + e.message)
+    })
+}
+
 function init(){
   if(token){
-    api('api/auth/me')
-      .then(function(u){currentUser=u;if(!u.is_admin){token=null;localStorage.removeItem('admin_token')};render()})
-      .catch(function(){token=null;localStorage.removeItem('admin_token');render()})
-  } else {
-    render()
+    api('api/auth/me').then(function(u){
+      currentUser=u
+      if(!u.is_admin){alert('Admin access required');logout();return}
+      renderDashboard(document.getElementById('app'))
+    }).catch(function(){logout()})
+  }else{
+    renderLogin(document.getElementById('app'))
   }
 }
 init()

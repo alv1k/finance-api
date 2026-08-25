@@ -6,6 +6,8 @@ const statements = [
     username   TEXT UNIQUE NOT NULL,
     password   TEXT NOT NULL,
     is_admin   BOOLEAN DEFAULT FALSE,
+    plan       VARCHAR(20) DEFAULT 'free',
+    plan_expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`,
 
@@ -76,6 +78,9 @@ const statements = [
     created_at    TIMESTAMPTZ DEFAULT NOW()
   )`,
 
+  `ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS is_completed BOOLEAN DEFAULT FALSE`,
+  `ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`,
+  `CREATE INDEX IF NOT EXISTS idx_savings_goals_completed ON savings_goals(instance_id, is_completed)`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS goal_id INTEGER`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS savings_type TEXT DEFAULT 'free'`,
   `ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_savings_type_check`,
@@ -154,7 +159,17 @@ const statements = [
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`,
 
-  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL`
+  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL`,
+
+  `CREATE TABLE IF NOT EXISTS telegram_finance_instances (
+    id SERIAL PRIMARY KEY,
+    tg_id BIGINT UNIQUE NOT NULL,
+    instance_id INTEGER NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(20) DEFAULT 'free'`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expires_at TIMESTAMPTZ`,
+  `CREATE INDEX IF NOT EXISTS idx_user_actions_log_lookup ON user_actions_log(user_id, action_type, created_at)`
 ]
 
 try {
