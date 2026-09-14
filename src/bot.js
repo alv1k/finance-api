@@ -7,6 +7,7 @@ import { signToken } from './auth.js'
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 const BASE_URL = 'https://finance.tiinservice.online'
+const MARKET_ENGINE_URL = process.env.MARKET_ENGINE_URL || 'http://host.docker.internal:8795'
 
 async function getAuthUrlForTgUser(tgId, instanceId = null) {
   try {
@@ -83,6 +84,26 @@ async function sendTelegramMessage(chatId, text, extra = {}) {
     })
   } catch (err) {
     console.error('[Bot Send Error]', err.message)
+  }
+}
+
+async function sendTelegramPhoto(chatId, photoBuffer, caption, extra = {}) {
+  try {
+    const formData = new FormData()
+    formData.append('chat_id', chatId)
+    formData.append('caption', caption || '')
+    formData.append('parse_mode', 'Markdown')
+    formData.append('photo', new Blob([photoBuffer], { type: 'image/png' }), 'route.png')
+    if (extra.reply_markup) {
+      formData.append('reply_markup', JSON.stringify(extra.reply_markup))
+    }
+
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+      method: 'POST',
+      body: formData
+    })
+  } catch (err) {
+    console.error('[Bot Send Photo Error]', err.message)
   }
 }
 
@@ -286,6 +307,17 @@ function normalizeReceiptDate(rawDate) {
       itemSummaries.push(`• ${v.itemName}: *${v.amount.toFixed(0)} ₽* (${resolvedCat.name})`)
     }
 
+    // Async crowd price ingestion to tiin-market-engine
+    fetch(`${MARKET_ENGINE_URL}/api/v1/ingest-receipt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        store_name: 'Магазин по чеку',
+        purchased_at: receiptDate,
+        items: itemsToInsert.map(i => ({ raw_name: i.itemName, price: i.price, quantity: i.qty }))
+      })
+    }).catch(err => console.error('[Market Ingestion Error]', err.message))
+
     const webAppUrl = await getAuthUrlForTgUser(tgId, instanceId)
     let reply = `✅ *Чек успешно обработан!*\n\n` +
       `Добавлено расходов на сумму: *${totalAdded.toFixed(0)} ₽*\n\n` +
@@ -306,7 +338,96 @@ function normalizeReceiptDate(rawDate) {
     })
   }
 
-  // 3. Handle Text Expense Input (e.g., "Кофе 250", "Такси 450 вокзал")
+  // 3. Handle /trip or /route command
+  if (msg.text && (msg.text.startsWith('/trip') || msg.text.startsWith('/route') || msg.text.includes('Оптимизировать покупки'))) {
+    return sendTelegramMessage(chatId, '📍 *Отправьте вашу геолокацию*, чтобы я рассчитал самый выгодный маршрут за покупками с учетом цен и транспорта!', {
+      reply_markup: {
+        keyboard: [
+          [{ text: '📍 Отправить геолокацию', request_location: true }],
+          [{ text: '❌ Отмена' }]
+        ],
+        resize_keyboard: true,
+        one_time_keyboard: true
+      }
+    })
+  }
+
+  // 4. Handle Location Message (Build Smart Route & Map Snapshot)
+  if (msg.location) {
+    const lat = msg.location.latitude
+    const lng = msg.location.longitude
+
+    await sendTelegramMessage(chatId, '🔍 *Анализирую цены в магазинах и строю маршрут...*', {
+      reply_markup: { remove_keyboard: true }
+    })
+
+    try {
+      // 1. Fetch unbought shopping items for this instance
+      const { rows: shoppingItems } = await pool.query(
+        'SELECT name FROM shopping_items WHERE instance_id = $1 AND bought = FALSE ORDER BY id ASC',
+        [instanceId]
+      )
+
+      const itemsToBuy = shoppingItems.length > 0 ? shoppingItems.map(i => i.name) : ['Хлеб', 'Молоко', 'Сахар', 'Чай']
+
+      // 2. Request optimizer from tiin-market-engine
+      const optRes = await fetch(`${MARKET_ENGINE_URL}/api/v1/optimize-basket`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: itemsToBuy,
+          user_location: { lat, lng },
+          transport: 'bus'
+        })
+      })
+
+      if (!optRes.ok) {
+        return sendTelegramMessage(chatId, '⚠️ Не удалось рассчитать маршрут. Попробуйте позже.')
+      }
+
+      const optData = await optRes.json()
+      const scenario = optData.scenarios?.[0]
+
+      if (!scenario) {
+        return sendTelegramMessage(chatId, 'ℹ️ В вашем списке нет товаров или не найдены подходящие магазины.')
+      }
+
+      // 3. Render Map Snapshot
+      const snapRes = await fetch(`${MARKET_ENGINE_URL}/api/v1/render-snapshot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_location: { lat, lng },
+          stops: scenario.stops,
+          polyline: scenario.polyline
+        })
+      })
+
+      let stopLines = scenario.stops.map((s, idx) => `📍 *${idx + 1}. ${s.name}*`).join('\n')
+      if (!stopLines) stopLines = '📍 Ближайшие супермаркеты у дома'
+
+      const caption = `🗺 *Оптимальный маршрут за покупками*\n\n` +
+        `🛒 *Товары:* ${itemsToBuy.slice(0, 5).join(', ')}${itemsToBuy.length > 5 ? '...' : ''}\n` +
+        `${stopLines}\n\n` +
+        `💰 *Сумма товаров:* ~${scenario.total_products_cost} ₽\n` +
+        `🚌 *Проезд:* ~${scenario.transport_cost} ₽\n` +
+        `⏱ *Время в пути:* ~${scenario.duration_min} мин (${scenario.distance_km} км)\n\n` +
+        `🔔 *Напоминание:* Не забудьте сфотографировать чек после покупок, чтобы закрыть пункты списка!`
+
+      if (snapRes.ok) {
+        const photoBuffer = Buffer.from(await snapRes.arrayBuffer())
+        return sendTelegramPhoto(chatId, photoBuffer, caption)
+      } else {
+        return sendTelegramMessage(chatId, caption)
+      }
+
+    } catch (err) {
+      console.error('[Route Snapshot Error]', err)
+      return sendTelegramMessage(chatId, '⚠️ Произошла ошибка при построении карты маршрута.')
+    }
+  }
+
+  // 5. Handle Text Expense Input (e.g., "Кофе 250", "Такси 450 вокзал")
   if (msg.text) {
     const text = msg.text.trim()
     const match = text.match(/^(.+?)\s+(\d+(?:[\.,]\d+)?)(?:\s+(.*))?$/)

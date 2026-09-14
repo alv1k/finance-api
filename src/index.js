@@ -2448,6 +2448,10 @@ app.get('/api/instances/:instanceId/suggest-category', authMiddleware, instanceM
       `SELECT c.id as category_id, c.name as category, COUNT(*) as cnt
        FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
        WHERE t.instance_id = $1 AND (${conditions.join(' OR ')}) AND t.category_id IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM category_hidden h
+           WHERE h.instance_id = $1 AND h.category_id = c.id
+         )
        GROUP BY c.id, c.name ORDER BY cnt DESC LIMIT 3`,
       params
     )
@@ -2456,7 +2460,17 @@ app.get('/api/instances/:instanceId/suggest-category', authMiddleware, instanceM
       const lower = name.toLowerCase()
       for (const [pattern, cat] of CATEGORY_KEYWORDS) {
         if (pattern.test(lower)) {
-          const { rows: catRows } = await pool.query('SELECT id, name FROM categories WHERE (instance_id = $1 OR instance_id IS NULL) AND LOWER(name) = LOWER($2) ORDER BY instance_id DESC NULLS LAST LIMIT 1', [req.instanceId, cat])
+          const { rows: catRows } = await pool.query(
+            `SELECT id, name FROM categories 
+             WHERE (instance_id = $1 OR instance_id IS NULL) 
+               AND LOWER(name) = LOWER($2)
+               AND NOT EXISTS (
+                 SELECT 1 FROM category_hidden h
+                 WHERE h.instance_id = $1 AND h.category_id = categories.id
+               )
+             ORDER BY (instance_id = $1) DESC NULLS LAST LIMIT 1`,
+            [req.instanceId, cat]
+          )
           const category_id = catRows.length > 0 ? catRows[0].id : null
           const category_name = catRows.length > 0 ? catRows[0].name : cat
           return res.json({ category_id: category_id, category: category_name, confidence: 60, alternatives: [] })

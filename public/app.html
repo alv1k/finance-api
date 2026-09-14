@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TIIN Finance — Управление бюджетом</title>
-<link rel="icon" type="image/png" href="/favicon.png">
-<link rel="shortcut icon" type="image/png" href="/favicon.png">
+<link rel="icon" type="image/png" href="https://uploads.tiinservice.online/f/uploaded/receipt.png">
+<link rel="shortcut icon" type="image/png" href="https://uploads.tiinservice.online/f/uploaded/receipt.png">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#0f1117;--surface:#1a1d2e;--surface2:#252a3a;--border:#2d3748;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--accent:#6366f1;--accent2:#818cf8;--accent-bg:rgba(99,102,241,.1);--green:#22c55e;--green-bg:rgba(34,197,94,.1);--green2:#4ade80;--red:#ef4444;--red-bg:rgba(239,68,68,.1);--red2:#f87171;--orange:#f59e0b;--orange-bg:rgba(245,158,11,.1);--r:12px;--rs:8px}
@@ -4170,10 +4170,64 @@ function showTxForm(tx,prefill){
 
   var suggestTimers={}
 
+  function applyCategoryToRow(idx, categoryId, categoryName){
+    var sel = document.getElementById('cat-sel-' + idx)
+    if(!sel) return false
+    var targetId = ''
+    var targetName = ''
+
+    if(categoryId){
+      for(var i=0;i<sel.options.length;i++){
+        if(String(sel.options[i].value)===String(categoryId) && sel.options[i].value!==''){
+          targetId = String(sel.options[i].value)
+          targetName = sel.options[i].text
+          break
+        }
+      }
+    }
+    if(!targetId && categoryName){
+      var cleanName = categoryName.trim().toLowerCase()
+      for(var i=0;i<sel.options.length;i++){
+        if(sel.options[i].value && sel.options[i].text.trim().toLowerCase()===cleanName){
+          targetId = String(sel.options[i].value)
+          targetName = sel.options[i].text
+          break
+        }
+      }
+    }
+    if(!targetId && categoryName){
+      var cleanName = categoryName.trim().toLowerCase()
+      for(var i=0;i<sel.options.length;i++){
+        var optText = sel.options[i].text.trim().toLowerCase()
+        if(sel.options[i].value && (optText.includes(cleanName) || cleanName.includes(optText))){
+          targetId = String(sel.options[i].value)
+          targetName = sel.options[i].text
+          break
+        }
+      }
+    }
+    if(targetId){
+      if(items[idx]){
+        items[idx].category_id = targetId
+        items[idx].category = targetName
+      }
+      sel.value = targetId
+      for(var o=0;o<sel.options.length;o++){
+        sel.options[o].selected = (String(sel.options[o].value)===targetId)
+      }
+      sel.dispatchEvent(new Event('change'))
+      return true
+    }
+    return false
+  }
+
   function suggestCategory(idx,name){
     if(!name||name.length<2){
       var hint=document.getElementById('cat-hint-'+idx)
-      if(hint)hint.innerHTML=''
+      if(hint){
+        hint.innerHTML=''
+        hint._suggestedCat=null
+      }
       return
     }
     clearTimeout(suggestTimers[idx])
@@ -4186,47 +4240,14 @@ function showTxForm(tx,prefill){
             var confColor=result.confidence>=70?'var(--green)':result.confidence>=50?'var(--orange)':'var(--text3)'
             hint.innerHTML='<span style="color:'+confColor+';font-size:11px">💡 '+result.category+' ('+result.confidence+'%)</span>'
             hint.style.cursor='pointer'
-            
-            var catId = result.category_id
-            if (!catId && result.category) {
-              var cats = typeof getCatsByType === 'function' ? getCatsByType('expense') : []
-              for (var c = 0; c < cats.length; c++) {
-                if (cats[c].name.toLowerCase() === result.category.toLowerCase()) {
-                  catId = cats[c].id
-                  break
-                }
-              }
-            }
-
-            if (catId) {
-              items[idx].category = result.category
-              items[idx].category_id = String(catId)
-              var selAuto = document.getElementById('cat-sel-' + idx)
-              if (selAuto) {
-                selAuto.value = String(catId)
-                for (var o = 0; o < selAuto.options.length; o++) {
-                  selAuto.options[o].selected = (String(selAuto.options[o].value) === String(catId))
-                }
-                selAuto.dispatchEvent(new Event('change'))
-              }
-            }
-
+            hint._suggestedCat={id:result.category_id,name:result.category}
+            applyCategoryToRow(idx, result.category_id, result.category)
             hint.onclick=function(){
-              if (catId) {
-                items[idx].category=result.category
-                items[idx].category_id=String(catId)
-                var sel=document.getElementById('cat-sel-'+idx)
-                if(sel) {
-                  sel.value=String(catId)
-                  for (var o = 0; o < sel.options.length; o++) {
-                    sel.options[o].selected = (String(sel.options[o].value) === String(catId))
-                  }
-                  sel.dispatchEvent(new Event('change'))
-                }
-              }
+              applyCategoryToRow(idx, result.category_id, result.category)
             }
           } else {
             hint.innerHTML=''
+            hint._suggestedCat=null
           }
         }).catch(function(){})
     },300)
@@ -4255,16 +4276,8 @@ function showTxForm(tx,prefill){
         ])
       ]),
       el('div',{id:'cat-hint-'+idx,style:'min-height:16px',onclick:function(){
-        var hint=this.innerHTML
-        if(!hint)return
-        var match=hint.match(/💡 ([^ ]+)/)
-        if(match){
-          items[idx].category=match[1]
-          for(var k=0;k<allCategories.length;k++){
-            if(allCategories[k].name===match[1]){items[idx].category_id=allCategories[k].id;break}
-          }
-          var sel=document.getElementById('cat-sel-'+idx)
-          if(sel&&items[idx].category_id)sel.value=items[idx].category_id
+        if(this._suggestedCat){
+          applyCategoryToRow(idx, this._suggestedCat.id, this._suggestedCat.name)
         }
       }})
     ])
@@ -4341,19 +4354,11 @@ function showTxForm(tx,prefill){
       }}(i)
       if(hint){
         hint.id='cat-hint-'+i
-        hint.onclick=function(idx){return function(){
-          var h=this.innerHTML
-          if(!h)return
-          var m=h.match(/💡 ([^ ]+)/)
-          if(m){
-            items[idx].category=m[1]
-            for(var k=0;k<allCategories.length;k++){
-              if(allCategories[k].name===m[1]){items[idx].category_id=allCategories[k].id;break}
-            }
-            var sel=document.getElementById('cat-sel-'+idx)
-            if(sel&&items[idx].category_id)sel.value=items[idx].category_id
+        hint.onclick=function(idx,hEl){return function(){
+          if(hEl._suggestedCat){
+            applyCategoryToRow(idx, hEl._suggestedCat.id, hEl._suggestedCat.name)
           }
-        }}(i)
+        }}(i,hint)
       }
       if(removeBtn)removeBtn.onclick=function(idx){return function(){removeItem(idx)}}(i)
     }
@@ -4697,11 +4702,8 @@ function autoCategorizeItems(itemsToCategorize){
     pending++
     api('api/instances/'+curInst.id+'/suggest-category?name='+encodeURIComponent(name))
       .then((function(idx){return function(result){
-        if(result.category&&result.confidence>=50){
-          itemsToCategorize[idx].category=result.category
-          itemsToCategorize[idx].category_id=result.category_id||''
-          var sel=document.getElementById('cat-sel-'+idx)
-          if(sel&&result.category_id)sel.value=result.category_id
+        if(result.category&&result.confidence>=30){
+          applyCategoryToRow(idx, result.category_id, result.category)
         }
       }})(i))
       .catch(function(){})
