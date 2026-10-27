@@ -2,12 +2,16 @@
 // Handles commands, photo receipt parsing via Gemini Vision 2.5 Flash, and quick expense creation
 
 import pool from './db.js'
-import { signToken } from './auth.js'
+import { signToken, hashPassword } from './auth.js'
+import path from 'path'
+import fs from 'fs/promises'
+import crypto from 'crypto'
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 const BASE_URL = 'https://finance.tiinservice.online'
 const MARKET_ENGINE_URL = process.env.MARKET_ENGINE_URL || 'http://host.docker.internal:8795'
+const AGY_INFERENCE_URL = process.env.AGY_INFERENCE_URL || 'http://agy-inference:8799'
 
 async function getAuthUrlForTgUser(tgId, instanceId = null) {
   try {
@@ -33,6 +37,20 @@ async function getAuthUrlForTgUser(tgId, instanceId = null) {
 
 let offset = 0
 let isPolling = false
+
+// Anti-Abuse: Telegram photo rate limiting maps
+const userPhotoCooldown = new Map() // tgId -> timestamp
+const userPhotoHourly = new Map()   // tgId -> { count, resetTime }
+
+setInterval(() => {
+  const now = Date.now()
+  for (const [id, time] of userPhotoCooldown.entries()) {
+    if (now - time > 60000) userPhotoCooldown.delete(id)
+  }
+  for (const [id, data] of userPhotoHourly.entries()) {
+    if (now > data.resetTime) userPhotoHourly.delete(id)
+  }
+}, 15 * 60 * 1000)
 
 export function startBot() {
   if (!BOT_TOKEN) {
@@ -119,6 +137,63 @@ async function handleUpdate(update) {
   // 1. Handle /start command & deep linking (/start link_123)
   if (msg.text && msg.text.startsWith('/start')) {
     const parts = msg.text.split(' ')
+    if (parts.length > 1 && parts[1].startsWith('auth_')) {
+      const authCode = parts[1].replace('auth_', '').trim()
+      if (authCode) {
+        try {
+          let { rows: userRows } = await pool.query(
+            `SELECT u.id, u.username, u.is_admin, tfi.instance_id
+             FROM telegram_finance_instances tfi
+             JOIN instances i ON i.id = tfi.instance_id
+             JOIN users u ON u.id = i.owner_id
+             WHERE tfi.tg_id = $1`,
+            [tgId]
+          )
+          let user = userRows[0]
+          let instanceId = user?.instance_id
+
+          if (!user) {
+            const tgUsername = msg.from?.username ? `tg_${msg.from.username}` : `tg_user_${tgId}`
+            const dummyPw = await hashPassword(crypto.randomBytes(16).toString('hex'))
+            const insUser = await pool.query(
+              'INSERT INTO users (username, password) VALUES ($1, $2) ON CONFLICT (username) DO UPDATE SET username = $1 RETURNING id, username, is_admin',
+              [tgUsername, dummyPw]
+            )
+            user = insUser.rows[0]
+            const insInst = await pool.query(
+              'INSERT INTO instances (name, owner_id) VALUES ($1, $2) RETURNING id',
+              [`Личный бюджет (${user.username})`, user.id]
+            )
+            instanceId = insInst.rows[0].id
+            await pool.query(
+              'INSERT INTO instance_members (instance_id, user_id, role) VALUES ($1, $2, $3)',
+              [instanceId, user.id, 'owner']
+            )
+            await pool.query(
+              'INSERT INTO telegram_finance_instances (tg_id, instance_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+              [tgId, instanceId]
+            )
+          }
+
+          const token = signToken({ id: user.id, username: user.username, is_admin: user.is_admin })
+          const upd = await pool.query(
+            `UPDATE telegram_login_codes
+             SET user_id = $1, token = $2, status = 'approved'
+             WHERE code = $3 AND expires_at > NOW() RETURNING id`,
+            [user.id, token, authCode]
+          )
+
+          if (upd.rows.length) {
+            return sendTelegramMessage(chatId, `✅ *Авторизация подтверждена!*\n\nВы вошли в TIIN Finance на вашем устройстве как *${user.username}*. Вкладка в браузере обновится автоматически!`)
+          } else {
+            return sendTelegramMessage(chatId, `⚠️ *Код авторизации не найден или устарел.*\n\nПожалуйста, запросите новую ссылку в браузере.`)
+          }
+        } catch (err) {
+          console.error('[Bot Auth Code Error]', err)
+        }
+      }
+    }
+
     if (parts.length > 1 && parts[1].startsWith('link_')) {
       const targetInstanceId = parseInt(parts[1].replace('link_', ''))
       if (targetInstanceId > 0) {
@@ -175,10 +250,34 @@ async function handleUpdate(update) {
 
   // 2. Handle Photo (Receipt Image)
   if (msg.photo && msg.photo.length > 0) {
-    await sendTelegramMessage(chatId, '⏳ *Анализирую чек с помощью нейросети Gemini AI...*')
-    
+    const now = Date.now()
+
+    // Anti-Abuse: Cooldown check (5 seconds between photos)
+    const lastPhotoTime = userPhotoCooldown.get(tgId) || 0
+    if (now - lastPhotoTime < 5000) {
+      return sendTelegramMessage(chatId, '⏳ *Подождите несколько секунд* перед отправкой следующего чека.')
+    }
+    userPhotoCooldown.set(tgId, now)
+
+    // Anti-Abuse: Hourly limit check (max 20 receipts per hour per user)
+    let hourlyRecord = userPhotoHourly.get(tgId)
+    if (!hourlyRecord || now > hourlyRecord.resetTime) {
+      hourlyRecord = { count: 1, resetTime: now + 60 * 60 * 1000 }
+      userPhotoHourly.set(tgId, hourlyRecord)
+    } else {
+      if (hourlyRecord.count >= 20) {
+        return sendTelegramMessage(chatId, '⚠️ *Превышен лимит распознаваний чеков* (макс. 20 в час). Пожалуйста, попробуйте позже.')
+      }
+      hourlyRecord.count++
+    }
+
     // Get highest resolution photo file_id
     const photo = msg.photo[msg.photo.length - 1]
+    if (photo.file_size && photo.file_size > 15 * 1024 * 1024) {
+      return sendTelegramMessage(chatId, '⚠️ Фотография слишком большая (макс. 15 МБ). Пожалуйста, отправьте стандартное фото.')
+    }
+
+    await sendTelegramMessage(chatId, '⏳ *Анализирую чек...*')
     const fileId = photo.file_id
 
     const fileRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`)
@@ -191,43 +290,20 @@ async function handleUpdate(update) {
     const filePath = fileData.result.file_path
     const imgRes = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`)
     const arrayBuffer = await imgRes.arrayBuffer()
-    const base64Image = Buffer.from(arrayBuffer).toString('base64')
+    const imageBuffer = Buffer.from(arrayBuffer)
     const mimeType = 'image/jpeg'
 
-    // Fetch instance categories to pass to Gemini
+    // Fetch instance categories
     const existingCats = await getInstanceCategories(instanceId, 'expense')
 
-function normalizeReceiptDate(rawDate) {
-  if (!rawDate || typeof rawDate !== 'string') return null
-  const clean = rawDate.trim()
-  
-  // YYYY-MM-DD or YYYY.MM.DD or YYYY/MM/DD
-  const isoMatch = clean.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/)
-  if (isoMatch) {
-    const y = parseInt(isoMatch[1], 10)
-    const m = parseInt(isoMatch[2], 10)
-    const d = parseInt(isoMatch[3], 10)
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    // 1. Parse receipt with high-speed Gemini Vision API (direct multimodal, 3-5s)
+    const base64Image = imageBuffer.toString('base64')
+    let parsedReceipt = await parseReceiptImageWithGemini(base64Image, mimeType, existingCats)
+
+    // 2. Fallback to local AGY Inference Gateway if needed
+    if (!parsedReceipt || !parsedReceipt.items || parsedReceipt.items.length === 0) {
+      parsedReceipt = await parseReceiptWithAgy(imageBuffer)
     }
-  }
-
-  // DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY
-  const ruMatch = clean.match(/^(\d{1,2})[-./](\d{1,2})[-./](\d{4})/)
-  if (ruMatch) {
-    const d = parseInt(ruMatch[1], 10)
-    const m = parseInt(ruMatch[2], 10)
-    const y = parseInt(ruMatch[3], 10)
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-    }
-  }
-
-  return null
-}
-
-    // Process image with Gemini 2.5 Flash Vision using instance categories
-    const parsedReceipt = await parseReceiptImageWithGemini(base64Image, mimeType, existingCats)
 
     if (!parsedReceipt || !parsedReceipt.items || parsedReceipt.items.length === 0) {
       return sendTelegramMessage(chatId, '⚠️ Не удалось разобрать товары на чеке. Убедитесь, что фото четкое и чек хорошо виден.')
@@ -478,7 +554,75 @@ function normalizeReceiptDate(rawDate) {
   }
 }
 
-// Gemini Vision 2.5 Flash receipt OCR parsing with dynamic instance categories
+function normalizeReceiptDate(rawDate) {
+  if (!rawDate || typeof rawDate !== 'string') return null
+  const clean = rawDate.trim()
+  
+  // YYYY-MM-DD or YYYY.MM.DD or YYYY/MM/DD
+  const isoMatch = clean.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/)
+  if (isoMatch) {
+    const y = parseInt(isoMatch[1], 10)
+    const m = parseInt(isoMatch[2], 10)
+    const d = parseInt(isoMatch[3], 10)
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    }
+  }
+
+  // DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY
+  const ruMatch = clean.match(/^(\d{1,2})[-./](\d{1,2})[-./](\d{4})/)
+  if (ruMatch) {
+    const d = parseInt(ruMatch[1], 10)
+    const m = parseInt(ruMatch[2], 10)
+    const y = parseInt(ruMatch[3], 10)
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    }
+  }
+
+  return null
+}
+
+// Zero-Trust Sandboxed AGY Inference Gateway OCR
+async function parseReceiptWithAgy(buffer) {
+  const tempFileName = `tg_receipt_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.jpg`
+  const tempFilePath = path.join('/app/uploaded', tempFileName)
+
+  try {
+    await fs.writeFile(tempFilePath, Buffer.from(buffer))
+
+    const internalKey = process.env.AGY_INTERNAL_KEY || '4a25446d88fc2c320ddd53575626866839888140f64b550e'
+    const ocrRes = await fetch(`${AGY_INFERENCE_URL}/v1/receipt-ocr`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Internal-Key': internalKey,
+        'X-Service-ID': 'finance-bot'
+      },
+      body: JSON.stringify({ file_name: tempFileName }),
+      signal: AbortSignal.timeout(60000)
+    })
+
+    if (ocrRes.ok) {
+      const data = await ocrRes.json()
+      if (data && Array.isArray(data.items) && data.items.length > 0) {
+        return data
+      }
+    } else {
+      const errText = await ocrRes.text()
+      console.error('[AGY Inference Bot OCR Non-OK]', ocrRes.status, errText)
+    }
+  } catch (err) {
+    console.error('[AGY Inference Bot OCR Error]', err.message)
+  } finally {
+    try {
+      await fs.unlink(tempFilePath)
+    } catch (e) {}
+  }
+  return null
+}
+
+// Gemini Vision receipt OCR parsing with dynamic instance categories
 async function parseReceiptImageWithGemini(base64Image, mimeType, availableCategories = []) {
   if (!GEMINI_API_KEY) return null
 
@@ -509,43 +653,53 @@ async function parseReceiptImageWithGemini(base64Image, mimeType, availableCateg
     - Если ничего не подходит, выбери "прочие нужды" или "без классификации".
 - Игнорируй общие строки ИТОГО, НДС, ИНН, сдача, скидки по чеку.`
 
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: mimeType, data: base64Image } }
-            ]
-          }]
-        })
+  const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-flash-latest']
+
+  for (const modelName of modelsToTry) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: prompt },
+                { inline_data: { mime_type: mimeType, data: base64Image } }
+              ]
+            }]
+          }),
+          signal: AbortSignal.timeout(45000)
+        }
+      )
+      const data = await res.json()
+      if (data.error) {
+        console.warn(`[Gemini Bot OCR ${modelName} Error]`, data.error.message)
+        continue
       }
-    )
-    const data = await res.json()
-    const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}'
-    
-    // Check if JSON object or array was returned
-    const objMatch = content.match(/\{[\s\S]*\}/)
-    if (objMatch) {
-      const parsed = JSON.parse(objMatch[0])
-      if (Array.isArray(parsed.items)) {
-        return parsed
+      const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}'
+      
+      const objMatch = content.match(/\{[\s\S]*\}/)
+      if (objMatch) {
+        const parsed = JSON.parse(objMatch[0])
+        if (Array.isArray(parsed.items) && parsed.items.length > 0) {
+          return parsed
+        }
       }
+      const arrMatch = content.match(/\[[\s\S]*\]/)
+      if (arrMatch) {
+        const items = JSON.parse(arrMatch[0])
+        if (Array.isArray(items) && items.length > 0) {
+          return { date: null, items }
+        }
+      }
+    } catch (err) {
+      console.warn(`[Gemini Bot OCR ${modelName} Fetch Error]`, err.message)
     }
-    const arrMatch = content.match(/\[[\s\S]*\]/)
-    if (arrMatch) {
-      const items = JSON.parse(arrMatch[0])
-      return { date: null, items }
-    }
-    return null
-  } catch (err) {
-    console.error('[Gemini Vision Error]', err)
-    return null
   }
+
+  return null
 }
 
 // Get linked user instance ID or fallback to instance ID 1 (default)

@@ -169,7 +169,32 @@ const statements = [
   )`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(20) DEFAULT 'free'`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expires_at TIMESTAMPTZ`,
-  `CREATE INDEX IF NOT EXISTS idx_user_actions_log_lookup ON user_actions_log(user_id, action_type, created_at)`
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS backup_frequency TEXT DEFAULT 'none'`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_backup_at TIMESTAMPTZ`,
+  `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+  `CREATE INDEX IF NOT EXISTS idx_user_actions_log_lookup ON user_actions_log(user_id, action_type, created_at)`,
+
+  `CREATE TABLE IF NOT EXISTS email_auth_codes (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    attempts INTEGER DEFAULT 0,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_email_auth_codes_lookup ON email_auth_codes(email, expires_at)`,
+
+  `CREATE TABLE IF NOT EXISTS telegram_login_codes (
+    id SERIAL PRIMARY KEY,
+    code TEXT UNIQUE NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT,
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'expired')),
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_telegram_login_codes_code ON telegram_login_codes(code)`
 ]
 
 try {

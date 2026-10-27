@@ -11,15 +11,14 @@ import {
   hashPassword, verifyPassword, signToken,
   authMiddleware, optionalAuthMiddleware, adminMiddleware, instanceMiddleware, instanceOwnerMiddleware
 } from './auth.js'
-import {
-  initDemoAccounts, getDemoSlotsStatus, occupyDemoSlot, releaseDemoSlot,
-  clearDemoInstanceData, seedDemoInstanceData, cleanupExpiredDemoSessions
-} from './demo.js'
+import { sendAuthCodeEmail } from './mailer.js'
+import { generateAndSendUserBackup, runScheduledBackups } from './backup.js'
 import XLSX from 'xlsx'
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 import { createRateLimiter, clearRateLimit, sanitizeUsername } from './rate-limiter.js'
 import { PLANS, getUserPlanInfo, getUserUsage } from './plans.js'
+import { parseQuickExpense } from './quick-nlp.js'
 
 
 
@@ -28,7 +27,7 @@ const app = express()
 const PORT = process.env.PORT || 3000
 
 app.use(cors())
-app.use(express.json())
+app.use(express.json({ limit: '1mb' }))
 app.use(express.static(path.join(__dirname, '../public')))
 
 // Favicon fallback route
@@ -58,6 +57,60 @@ const forgotPasswordLimiter = createRateLimiter({
   maxAttempts: 3,
   message: 'Слишком много запросов на сброс пароля. Подождите 15 минут.'
 })
+
+// Anti-Abuse: IP Rate Limiting for Email OTP
+const emailCodeIpLimiter = createRateLimiter({
+  prefix: 'email_code_ip',
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  maxAttempts: 5,
+  message: 'Слишком много запросов кода подтверждения с вашего IP. Пожалуйста, подождите 15 минут.'
+})
+
+// Anti-Abuse: IP Rate Limiting for Code Verification & Sync
+const verifySyncIpLimiter = createRateLimiter({
+  prefix: 'verify_sync_ip',
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  maxAttempts: 15,
+  message: 'Слишком много попыток ввода кода с вашего IP. Пожалуйста, подождите 15 минут.'
+})
+
+// Anti-Abuse: Rate Limiting for Telegram 1-click Link Request
+const tgLoginLimiter = createRateLimiter({
+  prefix: 'tg_link',
+  windowMs: 60 * 1000, // 1 minute
+  maxAttempts: 10,
+  message: 'Слишком много запросов ссылки авторизации. Подождите 1 минуту.'
+})
+
+// Global Circuit Breaker for SMTP / Brevo protection (max 30 emails / hour server-wide)
+const emailDispatchLog = []
+const MAX_GLOBAL_EMAILS_PER_HOUR = 30
+
+function checkGlobalEmailCircuitBreaker() {
+  const oneHourAgo = Date.now() - 60 * 60 * 1000
+  while (emailDispatchLog.length > 0 && emailDispatchLog[0] < oneHourAgo) {
+    emailDispatchLog.shift()
+  }
+  return emailDispatchLog.length < MAX_GLOBAL_EMAILS_PER_HOUR
+}
+
+function recordEmailDispatch() {
+  emailDispatchLog.push(Date.now())
+}
+
+// Disposable & Temporary Email Domain Blocklist
+const DISPOSABLE_EMAIL_DOMAINS = new Set([
+  'tempmail.com', '10minutemail.com', 'guerrillamail.com', 'mailinator.com',
+  'dispostable.com', 'yopmail.com', 'trashmail.com', 'sharklasers.com',
+  'getairmail.com', 'mohmal.com', 'crazymailing.com', 'fakeinbox.com',
+  'burnermail.io', 'dropmail.me', 'generator.email', 'temp-mail.org',
+  'inboxkitten.com', 'mailcatch.com', 'maildrop.cc'
+])
+
+function isDisposableEmail(email) {
+  const domain = String(email).split('@')[1]?.toLowerCase().trim()
+  return domain ? DISPOSABLE_EMAIL_DOMAINS.has(domain) : false
+}
 
 // Fake password verification hash for timing attack protection
 const DUMMY_PASSWORD_HASH = '$2b$12$e09a3qXjO6L/s5bM55F0.uH9iK3R/7iH3H9nL2m3j4k5l6m7n8o9p'
@@ -291,7 +344,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, plan, plan_expires_at FROM users WHERE id = $1', [req.user.id]
+      'SELECT id, username, is_admin, plan, plan_expires_at, api_key FROM users WHERE id = $1', [req.user.id]
     )
     if (!rows.length) return res.status(404).json({ error: 'Пользователь не найден' })
     
@@ -332,6 +385,23 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
       is_demo: !!req.user.is_demo,
       demo: demoInfo,
       plan_info: planInfo
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/user/api-key', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT api_key FROM users WHERE id = $1', [req.user.id])
+    const apiKey = rows[0]?.api_key
+    const baseUrl = 'https://finance.tiinservice.online'
+    res.json({
+      ok: true,
+      api_key: apiKey,
+      webhook_url: `${baseUrl}/api/quick-expense?key=${apiKey}`,
+      curl_example: `curl -X POST "${baseUrl}/api/quick-expense" -H "X-API-Key: ${apiKey}" -H "Content-Type: application/json" -d '{"text":"350 рублей обед"}'`,
+      siri_url_example: `${baseUrl}/api/quick-expense?key=${apiKey}&q=350+рублей+обед`
     })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -380,62 +450,360 @@ app.get('/api/user/plan', authMiddleware, async (req, res) => {
   }
 })
 
-// ==================== DEMO MODE ROUTES ====================
+// ==================== EMAIL & TELEGRAM AUTH ROUTES ====================
 
-app.get('/api/demo/slots', async (req, res) => {
+app.post('/api/auth/email/request-code', emailCodeIpLimiter, async (req, res) => {
   try {
-    const slots = await getDemoSlotsStatus()
-    res.json({ slots })
+    const rawEmail = String(req.body.email || '').trim().toLowerCase()
+    if (!rawEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
+      return res.status(400).json({ error: 'Пожалуйста, укажите корректный адрес электронной почты' })
+    }
+
+    if (isDisposableEmail(rawEmail)) {
+      return res.status(400).json({ error: 'Регистрация с временных почтовых ящиков запрещена. Используйте постоянную почту.' })
+    }
+
+    // Global Circuit Breaker check: protect Brevo quota (max 30 emails/hr)
+    if (!checkGlobalEmailCircuitBreaker()) {
+      console.warn(`[CIRCUIT BREAKER TRIGGERED] Global email hourly limit (30/hr) reached. Dropping request for ${rawEmail}`)
+      if (process.env.TELEGRAM_BOT_TOKEN && process.env.ADMIN_TG_ID) {
+        fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: process.env.ADMIN_TG_ID,
+            text: `🚨 *Абуз почты в TIIN Finance!*\n\nСработал глобальный предохранитель (превышено 30 писем/час). Запрос от IP \`${req.headers['x-real-ip'] || req.ip}\` на \`${rawEmail}\` временно отклонен.`,
+            parse_mode: 'Markdown'
+          })
+        }).catch(() => {})
+      }
+      return res.status(429).json({ error: 'Сервис временно перегружен запросами кодов. Пожалуйста, попробуйте через час.' })
+    }
+
+    // 1. Cooldown check: max 1 code per 60 seconds
+    const { rows: recent } = await pool.query(
+      `SELECT created_at FROM email_auth_codes
+       WHERE email = $1 AND created_at > NOW() - INTERVAL '60 seconds'
+       ORDER BY id DESC LIMIT 1`,
+      [rawEmail]
+    )
+    if (recent.length) {
+      return res.status(429).json({ error: 'Повторный код можно запросить через 60 секунд' })
+    }
+
+    // 2. Hourly check: max 5 requests per hour
+    const { rows: countRows } = await pool.query(
+      `SELECT COUNT(*) FROM email_auth_codes
+       WHERE email = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
+      [rawEmail]
+    )
+    if (parseInt(countRows[0].count, 10) >= 5) {
+      return res.status(429).json({ error: 'Превышен часовой лимит отправки кодов (макс. 5). Попробуйте позже.' })
+    }
+
+    // 3. Generate 6-digit CSPRNG code
+    const code = String(crypto.randomInt(100000, 1000000))
+    const codeHash = crypto.createHash('sha256').update(code + (process.env.JWT_SECRET || 'tiin_secret')).digest('hex')
+
+    await pool.query(
+      `INSERT INTO email_auth_codes (email, code_hash, expires_at)
+       VALUES ($1, $2, NOW() + INTERVAL '5 minutes')`,
+      [rawEmail, codeHash]
+    )
+
+    recordEmailDispatch()
+
+    // 4. Send email in background (non-blocking)
+    sendAuthCodeEmail(rawEmail, code).catch(err => {
+      console.warn('[Email background send error]', err.message)
+    })
+    res.json({ ok: true, message: 'Код подтверждения отправлен на вашу почту' })
+  } catch (err) {
+    console.error('[Email Auth Code Error]', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/auth/email/verify-and-sync', verifySyncIpLimiter, async (req, res) => {
+  try {
+    const rawEmail = String(req.body.email || '').trim().toLowerCase()
+    const code = String(req.body.code || '').trim()
+    const backupFrequency = req.body.backup_frequency || 'none'
+    const localData = req.body.local_data || null
+
+    if (!rawEmail || !code || code.length !== 6) {
+      return res.status(400).json({ error: 'Укажите email и 6-значный код подтверждения' })
+    }
+
+    // Find active code
+    const { rows: codeRows } = await pool.query(
+      `SELECT * FROM email_auth_codes
+       WHERE email = $1 AND expires_at > NOW()
+       ORDER BY id DESC LIMIT 1`,
+      [rawEmail]
+    )
+
+    if (!codeRows.length) {
+      return res.status(400).json({ error: 'Срок действия кода истек или код не запрашивался. Запросите новый код.' })
+    }
+
+    const row = codeRows[0]
+    if (row.attempts >= 3) {
+      await pool.query('DELETE FROM email_auth_codes WHERE id = $1', [row.id])
+      return res.status(400).json({ error: 'Превышено максимальное число попыток ввода. Запросите новый код.' })
+    }
+
+    const actualHash = crypto.createHash('sha256').update(code + (process.env.JWT_SECRET || 'tiin_secret')).digest('hex')
+    const isValid = crypto.timingSafeEqual(Buffer.from(actualHash), Buffer.from(row.code_hash))
+
+    if (!isValid) {
+      await pool.query('UPDATE email_auth_codes SET attempts = attempts + 1 WHERE id = $1', [row.id])
+      const left = Math.max(0, 2 - row.attempts)
+      return res.status(400).json({ error: `Неверный код подтверждения. Осталось попыток: ${left}` })
+    }
+
+    // Code verified: delete it immediately (single-use)
+    await pool.query('DELETE FROM email_auth_codes WHERE email = $1', [rawEmail])
+
+    // Find or create user
+    let { rows: userRows } = await pool.query('SELECT * FROM users WHERE email = $1', [rawEmail])
+    let user = userRows[0]
+    let isNewUser = false
+
+    if (!user) {
+      const baseName = rawEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20) || 'user'
+      let username = baseName
+      const existingU = await pool.query('SELECT 1 FROM users WHERE username = $1', [username])
+      if (existingU.rows.length) {
+        username = `${baseName}_${crypto.randomInt(1000, 9999)}`
+      }
+      const dummyPw = await hashPassword(crypto.randomBytes(16).toString('hex'))
+      const ins = await pool.query(
+        'INSERT INTO users (username, password, email, backup_frequency) VALUES ($1, $2, $3, $4) RETURNING id, username, email, is_admin, plan',
+        [username, dummyPw, rawEmail, ['weekly', 'monthly'].includes(backupFrequency) ? backupFrequency : 'none']
+      )
+      user = ins.rows[0]
+      isNewUser = true
+    } else if (backupFrequency && ['weekly', 'monthly', 'none'].includes(backupFrequency)) {
+      await pool.query('UPDATE users SET backup_frequency = $1 WHERE id = $2', [backupFrequency, user.id])
+      user.backup_frequency = backupFrequency
+    }
+
+    let targetInstance = null
+
+    // If local data contains transactions, import into a new instance
+    if (localData && Array.isArray(localData.transactions) && localData.transactions.length > 0) {
+      const instName = localData.instance_name || `Бюджет (${user.username})`
+      const insInst = await pool.query(
+        'INSERT INTO instances (name, owner_id) VALUES ($1, $2) RETURNING id, name',
+        [instName, user.id]
+      )
+      targetInstance = insInst.rows[0]
+      await pool.query(
+        'INSERT INTO instance_members (instance_id, user_id, role) VALUES ($1, $2, $3)',
+        [targetInstance.id, user.id, 'owner']
+      )
+
+      // Import categories
+      const catMap = new Map()
+      if (Array.isArray(localData.categories)) {
+        for (const cat of localData.categories) {
+          if (!cat.name) continue
+          const cName = String(cat.name).trim()
+          const cType = ['expense', 'income', 'savings'].includes(cat.type) ? cat.type : 'expense'
+          const cRes = await pool.query(
+            'INSERT INTO categories (name, type, instance_id, is_default) VALUES ($1, $2, $3, FALSE) ON CONFLICT DO NOTHING RETURNING id',
+            [cName, cType, targetInstance.id]
+          )
+          if (cRes.rows.length) {
+            catMap.set(cName, cRes.rows[0].id)
+            if (cat.id) catMap.set(String(cat.id), cRes.rows[0].id)
+          }
+        }
+      }
+
+      // Import transactions (up to 2000 items)
+      const txList = localData.transactions.slice(0, 2000)
+      for (const tx of txList) {
+        if (!tx.name || !tx.amount) continue
+        const txId = tx.id && String(tx.id).length <= 64 ? String(tx.id) : `tx_${Date.now()}_${crypto.randomInt(100, 999)}`
+        const txType = ['expense', 'income', 'savings'].includes(tx.type) ? tx.type : 'expense'
+        let catId = tx.category_id ? catMap.get(String(tx.category_id)) : null
+        if (!catId && tx.category) {
+          const cName = String(tx.category).trim()
+          if (cName) {
+            let existing = catMap.get(cName)
+            if (!existing) {
+              const cRes = await pool.query(
+                'INSERT INTO categories (name, type, instance_id, is_default) VALUES ($1, $2, $3, FALSE) RETURNING id',
+                [cName, txType, targetInstance.id]
+              )
+              if (cRes.rows.length) {
+                existing = cRes.rows[0].id
+                catMap.set(cName, existing)
+              }
+            }
+            catId = existing || null
+          }
+        }
+        const amt = Math.abs(parseFloat(tx.amount) || 0)
+        const txDate = tx.date && /^\d{4}-\d{2}-\d{2}$/.test(tx.date) ? tx.date : new Date().toISOString().slice(0, 10)
+
+        await pool.query(
+          `INSERT INTO transactions (id, name, date, type, amount, category_id, instance_id, comment)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (id) DO NOTHING`,
+          [txId, String(tx.name).slice(0, 255), txDate, txType, amt, catId || null, targetInstance.id, String(tx.comment || '').slice(0, 500)]
+        )
+      }
+    } else {
+      // Find user's existing instances
+      const { rows: userInsts } = await pool.query(
+        'SELECT i.id, i.name, im.role FROM instances i JOIN instance_members im ON im.instance_id = i.id WHERE im.user_id = $1 ORDER BY i.id ASC',
+        [user.id]
+      )
+      if (userInsts.length) {
+        targetInstance = userInsts[0]
+      } else {
+        const insInst = await pool.query(
+          'INSERT INTO instances (name, owner_id) VALUES ($1, $2) RETURNING id, name',
+          [`Личный бюджет (${user.username})`, user.id]
+        )
+        targetInstance = insInst.rows[0]
+        await pool.query(
+          'INSERT INTO instance_members (instance_id, user_id, role) VALUES ($1, $2, $3)',
+          [targetInstance.id, user.id, 'owner']
+        )
+      }
+    }
+
+    const token = signToken({ id: user.id, username: user.username, email: user.email, is_admin: user.is_admin })
+    res.json({
+      token,
+      user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, backup_frequency: user.backup_frequency },
+      instance: targetInstance,
+      is_new_user: isNewUser
+    })
+  } catch (err) {
+    console.error('[Email Verify Error]', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/auth/telegram/request-link', tgLoginLimiter, async (req, res) => {
+  try {
+    const code = crypto.randomBytes(8).toString('hex')
+    await pool.query(
+      `INSERT INTO telegram_login_codes (code, expires_at)
+       VALUES ($1, NOW() + INTERVAL '10 minutes')`,
+      [code]
+    )
+    const botUsername = process.env.TELEGRAM_BOT_USERNAME || 'FinanceTiinServiceBot'
+    const botUrl = `https://t.me/${botUsername}?start=auth_${code}`
+    res.json({ code, bot_url: botUrl })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
-app.post('/api/demo/login', async (req, res) => {
+app.get('/api/auth/telegram/check-status', async (req, res) => {
   try {
-    const { slot } = req.body || {}
-    const result = await occupyDemoSlot(slot ? parseInt(slot) : null)
-    if (!result.success) {
-      return res.status(409).json({ error: result.error })
+    const code = String(req.query.code || '').trim()
+    if (!code) return res.status(400).json({ error: 'Code required' })
+
+    const { rows } = await pool.query(
+      `SELECT t.*, u.username, u.email, u.is_admin, u.backup_frequency
+       FROM telegram_login_codes t
+       LEFT JOIN users u ON u.id = t.user_id
+       WHERE t.code = $1`,
+      [code]
+    )
+
+    if (!rows.length) return res.status(404).json({ status: 'not_found' })
+    const row = rows[0]
+    if (new Date(row.expires_at) < new Date()) {
+      return res.json({ status: 'expired' })
     }
-    res.json(result)
+
+    if (row.status === 'approved' && row.token) {
+      // Find instance for user
+      const { rows: insts } = await pool.query(
+        'SELECT i.id, i.name, im.role FROM instances i JOIN instance_members im ON im.instance_id = i.id WHERE im.user_id = $1 ORDER BY i.id ASC LIMIT 1',
+        [row.user_id]
+      )
+      return res.json({
+        status: 'approved',
+        token: row.token,
+        user: { id: row.user_id, username: row.username, email: row.email, is_admin: row.is_admin, backup_frequency: row.backup_frequency },
+        instance: insts[0] || null
+      })
+    }
+
+    res.json({ status: 'pending' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
-app.post('/api/demo/logout', authMiddleware, async (req, res) => {
+// ==================== USER BACKUP SETTINGS & TRIGGER ====================
+
+app.get('/api/user/backup/settings', authMiddleware, async (req, res) => {
   try {
-    if (!req.user.is_demo) {
-      return res.status(400).json({ error: 'Не является гостевым аккаунтом' })
-    }
-    await releaseDemoSlot(req.user.id)
-    res.json({ ok: true })
+    const { rows } = await pool.query('SELECT email, backup_frequency, last_backup_at FROM users WHERE id = $1', [req.user.id])
+    if (!rows.length) return res.status(404).json({ error: 'User not found' })
+    res.json(rows[0])
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
-app.post('/api/demo/seed', authMiddleware, instanceMiddleware, async (req, res) => {
+app.post('/api/user/backup/settings', authMiddleware, async (req, res) => {
   try {
-    if (!req.user.is_demo) {
-      return res.status(403).json({ error: 'Доступно только в демо-режиме' })
+    const { backup_frequency, email } = req.body || {}
+    const freq = ['weekly', 'monthly', 'none'].includes(backup_frequency) ? backup_frequency : 'none'
+    const mail = email ? String(email).trim().toLowerCase() : null
+
+    if (mail) {
+      await pool.query('UPDATE users SET backup_frequency = $1, email = $2 WHERE id = $3', [freq, mail, req.user.id])
+    } else {
+      await pool.query('UPDATE users SET backup_frequency = $1 WHERE id = $2', [freq, req.user.id])
     }
-    await seedDemoInstanceData(req.instanceId)
-    res.json({ ok: true, message: 'Живые демо-данные успешно сгенерированы!' })
+    res.json({ ok: true, backup_frequency: freq, email: mail })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
-app.post('/api/demo/clear', authMiddleware, instanceMiddleware, async (req, res) => {
+app.post('/api/user/backup/trigger', authMiddleware, async (req, res) => {
   try {
-    if (!req.user.is_demo) {
-      return res.status(403).json({ error: 'Доступно только в демо-режиме' })
+    const { rows } = await pool.query('SELECT email, last_backup_at FROM users WHERE id = $1', [req.user.id])
+    const userRow = rows[0]
+    const email = (req.body && req.body.email) || userRow?.email
+    if (!email) {
+      return res.status(400).json({ error: 'Укажите адрес электронной почты для отправки бэкапа' })
     }
-    await clearDemoInstanceData(req.instanceId)
-    res.json({ ok: true, message: 'Демо-данные успешно очищены!' })
+
+    // Anti-Abuse: 6-hour cooldown on manual backups
+    if (userRow?.last_backup_at) {
+      const lastBackup = new Date(userRow.last_backup_at).getTime()
+      const cooldownMs = 6 * 60 * 60 * 1000 // 6 hours
+      const diff = Date.now() - lastBackup
+      if (diff < cooldownMs) {
+        const msLeft = cooldownMs - diff
+        const hoursLeft = Math.floor(msLeft / (3600 * 1000))
+        const minsLeft = Math.ceil((msLeft % (3600 * 1000)) / (60 * 1000))
+        const timeStr = hoursLeft > 0 ? `${hoursLeft} ч. ${minsLeft} мин.` : `${minsLeft} мин.`
+        return res.status(429).json({
+          error: `Свежая копия уже была отправлена недавно. Следующая выгрузка доступна через ${timeStr}`
+        })
+      }
+    }
+
+    const result = await generateAndSendUserBackup(req.user.id, email)
+    await pool.query('UPDATE users SET last_backup_at = NOW() WHERE id = $1', [req.user.id])
+    res.json({ ok: true, message: `Резервная копия (${result.stats.txCount} транзакций) успешно отправлена на ${email}`, stats: result.stats })
   } catch (err) {
+    console.error('[Backup Trigger Error]', err)
     res.status(500).json({ error: err.message })
   }
 })
@@ -771,41 +1139,45 @@ app.post('/api/instances/:instanceId/upload-receipt', authMiddleware, instanceMi
       }
     }
 
-    const script = spawn('python3', ['/app/scripts/scan_receipt.py', '--url', req.file.path], {
-      env: {
-        ...process.env,
-        FINANCE_API_URL: 'http://127.0.0.1:3000',
-        FINANCE_JWT: req.headers.authorization.split(' ')[1],
-        FINANCE_INSTANCE_ID: req.instanceId
-      }
+    const agyInferenceUrl = process.env.AGY_INFERENCE_URL || 'http://agy-inference:8799'
+    const internalKey = process.env.AGY_INTERNAL_KEY || '4a25446d88fc2c320ddd53575626866839888140f64b550e'
+    const ocrResponse = await fetch(`${agyInferenceUrl}/v1/receipt-ocr`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Internal-Key': internalKey,
+        'X-Service-ID': 'finance-api'
+      },
+      body: JSON.stringify({ file_name: fileName })
     })
-    let stdout = '', stderr = ''
-    script.stdout.on('data', data => stdout += data)
-    script.stderr.on('data', data => stderr += data)
-    script.on('close', async (code) => {
-      if (code !== 0) {
-        try {
-          const result = JSON.parse(stdout)
-          if (result.error) return res.status(500).json({ error: result.error, stderr, image_path: req.file.path, raw: stdout })
-        } catch (e) {}
-        return res.status(500).json({ error: 'Scan failed', stderr, raw: stdout, image_path: req.file.path })
-      }
-      try {
-        const result = JSON.parse(stdout)
-        // Log action
-        if (!req.user.is_demo) {
-          await pool.query(
-            `INSERT INTO user_actions_log (user_id, instance_id, action_type, entity_type) VALUES ($1, $2, 'scan_receipt', 'receipt')`,
-            [req.user.id, req.instanceId]
-          ).catch(console.error)
-        }
-        res.json({ ...result, image_path: req.file.path })
-      } catch (e) {
-        res.status(500).json({ error: 'Failed to parse scan result', raw: stdout, image_path: req.file.path })
-      }
+
+    const ocrData = await ocrResponse.json()
+
+    if (!ocrResponse.ok) {
+      console.error('AGY Inference OCR failed:', ocrResponse.status, ocrData)
+      return res.status(ocrResponse.status || 500).json({
+        error: ocrData.detail || 'Не удалось распознать чек',
+        image_path: req.file.path
+      })
+    }
+
+    // Log action
+    if (!req.user.is_demo) {
+      await pool.query(
+        `INSERT INTO user_actions_log (user_id, instance_id, action_type, entity_type) VALUES ($1, $2, 'scan_receipt', 'receipt')`,
+        [req.user.id, req.instanceId]
+      ).catch(console.error)
+    }
+
+    res.json({
+      date: ocrData.date || null,
+      items: ocrData.items || [],
+      total: ocrData.total || 0,
+      image_path: req.file.path
     })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    console.error('Error in upload-receipt:', err)
+    res.status(500).json({ error: err.message, image_path: req.file?.path })
   }
 })
 
@@ -1298,6 +1670,163 @@ app.delete('/api/instances/:instanceId/transactions/:id', authMiddleware, instan
     res.status(500).json({ error: err.message })
   }
 })
+
+// ==================== HEADLESS QUICK EXPENSE API ====================
+// Accepts natural language text (e.g. "350 рублей обед", "вчера такси 450", "зарплата 85000")
+// Designed for Voice Assistants (Siri Shortcuts, Google Assistant, Tasker) and Headless Widgets.
+
+const handleQuickExpense = async (req, res) => {
+  try {
+    const rawText = req.body?.text || req.body?.query || req.body?.q || req.query?.text || req.query?.query || req.query?.q
+    if (!rawText || !String(rawText).trim()) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Не передан текст операции',
+        hint: 'Примеры: "350 рублей обед", "кофе 250 сбер", "такси 450", "зарплата 85000"'
+      })
+    }
+
+    const text = String(rawText).trim()
+
+    // 1. Resolve Target Instance
+    let targetInstanceId = parseInt(req.body?.instance_id || req.query?.instance_id)
+    if (!targetInstanceId || isNaN(targetInstanceId)) {
+      // Pick user's primary/owned instance
+      const { rows: instRows } = await pool.query(
+        `SELECT i.id, i.name
+         FROM instance_members im
+         JOIN instances i ON i.id = im.instance_id
+         WHERE im.user_id = $1
+         ORDER BY (im.role = 'owner') DESC, im.id ASC
+         LIMIT 1`,
+        [req.user.id]
+      )
+      if (instRows.length) {
+        targetInstanceId = instRows[0].id
+      } else {
+        // Create default personal instance if user has none
+        const { rows: newInst } = await pool.query(
+          'INSERT INTO instances (name, owner_id) VALUES ($1, $2) RETURNING id',
+          ['Личный бюджет', req.user.id]
+        )
+        targetInstanceId = newInst[0].id
+        await pool.query(
+          'INSERT INTO instance_members (instance_id, user_id, role) VALUES ($1, $2, \'owner\')',
+          [targetInstanceId, req.user.id]
+        )
+      }
+    } else {
+      // Validate membership in provided instance
+      const { rows: memRows } = await pool.query(
+        'SELECT role FROM instance_members WHERE instance_id = $1 AND user_id = $2',
+        [targetInstanceId, req.user.id]
+      )
+      if (!memRows.length) {
+        return res.status(403).json({ ok: false, error: 'Вы не являетесь участником указанного инстанса' })
+      }
+    }
+
+    // 2. Check Plan Limits
+    if (req.user.is_demo) {
+      const { rows: txCountRows } = await pool.query(
+        'SELECT COUNT(*) FROM transactions WHERE instance_id = $1',
+        [targetInstanceId]
+      )
+      if (parseInt(txCountRows[0].count) >= 30) {
+        return res.status(403).json({ ok: false, error: 'Достигнут лимит 30 транзакций для демо-сессии.' })
+      }
+    } else {
+      const planInfo = await getUserPlanInfo(req.user.id)
+      if (!planInfo.is_admin && Number.isFinite(planInfo.limits?.maxTransactions)) {
+        const { rows: txCountRows } = await pool.query(
+          'SELECT COUNT(*) FROM transactions WHERE instance_id = $1',
+          [targetInstanceId]
+        )
+        const count = parseInt(txCountRows[0].count) || 0
+        if (count >= planInfo.limits.maxTransactions) {
+          return res.status(403).json({
+            ok: false,
+            error: `Достигнут лимит ${planInfo.limits.maxTransactions} транзакций для тарифа "${planInfo.name}".`
+          })
+        }
+      }
+    }
+
+    // 3. Fetch Existing Categories for Instance
+    const { rows: existingCats } = await pool.query(
+      'SELECT id, name, type FROM categories WHERE instance_id = $1 OR instance_id IS NULL',
+      [targetInstanceId]
+    )
+
+    // 4. Parse Natural Language Text via NLP / AGY
+    const parsedItems = await parseQuickExpense(text, existingCats)
+
+    if (!parsedItems || parsedItems.length === 0) {
+      return res.status(422).json({
+        ok: false,
+        error: 'Не удалось определить сумму или операцию',
+        hint: 'Попробуйте указать сумму и категорию: например, "350 рублей обед" или "бензин 1500"'
+      })
+    }
+
+    // 5. Insert Transactions
+    const insertedTransactions = []
+    for (const item of parsedItems) {
+      const catId = await resolveCategoryId(pool, targetInstanceId, item.category, item.type)
+      const txId = 'quick-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7)
+
+      const { rows: inserted } = await pool.query(
+        `INSERT INTO transactions (id, name, date, type, amount, category_id, comment, instance_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, name, date, type, amount, category_id, comment, instance_id`,
+        [txId, item.name, item.date, item.type, item.amount, catId, item.comment || 'Быстрый ввод', targetInstanceId]
+      )
+
+      insertedTransactions.push({
+        ...inserted[0],
+        category: item.category
+      })
+
+      // Analytics log
+      if (!req.user.is_demo) {
+        pool.query(
+          'INSERT INTO user_actions_log (user_id, instance_id, action_type, entity_type, entity_id) VALUES ($1, $2, $3, $4, $5)',
+          [req.user.id, targetInstanceId, 'quick_expense', 'transaction', txId]
+        ).catch(console.error)
+      }
+    }
+
+    // 6. Format Friendly Spoken Message for Voice Assistants
+    let voiceMessage = ''
+    if (insertedTransactions.length === 1) {
+      const tx = insertedTransactions[0]
+      const formattedAmt = Number(tx.amount).toLocaleString('ru-RU') + ' ₽'
+      if (tx.type === 'income') {
+        voiceMessage = `Зачислен доход: ${tx.name} — ${formattedAmt}`
+      } else {
+        voiceMessage = `Записан расход: ${tx.name} — ${formattedAmt} (${tx.category})`
+      }
+    } else {
+      const totalAmt = insertedTransactions.reduce((acc, t) => acc + parseFloat(t.amount || 0), 0)
+      const listNames = insertedTransactions.map(t => `${t.name} (${Number(t.amount).toLocaleString('ru-RU')} ₽)`).join(', ')
+      voiceMessage = `Записано операций: ${insertedTransactions.length} на сумму ${totalAmt.toLocaleString('ru-RU')} ₽: ${listNames}`
+    }
+
+    res.status(201).json({
+      ok: true,
+      message: voiceMessage,
+      count: insertedTransactions.length,
+      transactions: insertedTransactions
+    })
+  } catch (err) {
+    console.error('[Quick Expense API Error]', err)
+    res.status(500).json({ ok: false, error: err.message })
+  }
+}
+
+app.post('/api/quick-expense', authMiddleware, handleQuickExpense)
+app.get('/api/quick-expense', authMiddleware, handleQuickExpense)
+app.post('/api/instances/:instanceId/quick-expense', authMiddleware, instanceMiddleware, handleQuickExpense)
 
 // ==================== SHOPPING LIST ROUTES (instance-scoped) ====================
 
@@ -1920,289 +2449,9 @@ app.delete('/api/instances/:instanceId/savings/:id', authMiddleware, instanceMid
   }
 })
 
-// ==================== CREDITS ROUTES ====================
-
-app.get('/api/instances/:instanceId/credits', authMiddleware, instanceMiddleware, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT c.*,
-              COALESCE((SELECT SUM(cp.amount) FROM credit_payments cp WHERE cp.credit_id = c.id), 0) as total_paid,
-              COALESCE((SELECT SUM(cp.principal_amount) FROM credit_payments cp WHERE cp.credit_id = c.id), 0) as total_principal,
-              COALESCE((SELECT SUM(cp.interest_amount) FROM credit_payments cp WHERE cp.credit_id = c.id), 0) as total_interest,
-              (SELECT COUNT(*) FROM credit_payments cp WHERE cp.credit_id = c.id) as payment_count
-       FROM credits c
-       WHERE c.instance_id = $1
-       ORDER BY c.created_at DESC`,
-      [req.instanceId]
-    )
-    res.json(rows.map(r => ({
-      ...r,
-      total_amount: parseFloat(r.total_amount),
-      interest_rate: parseFloat(r.interest_rate),
-      monthly_payment: parseFloat(r.monthly_payment),
-      remaining_amount: parseFloat(r.remaining_amount != null ? r.remaining_amount : r.total_amount),
-      total_paid: parseFloat(r.total_paid),
-      total_principal: parseFloat(r.total_principal),
-      total_interest: parseFloat(r.total_interest),
-      payment_count: parseInt(r.payment_count)
-    })))
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-app.post('/api/instances/:instanceId/credits', authMiddleware, instanceMiddleware, async (req, res) => {
-  try {
-    const { name, lender, total_amount, interest_rate, monthly_payment, payment_day, start_date, end_date, comment } = req.body
-    if (!name || !total_amount) return res.status(400).json({ error: 'Name and total amount required' })
-    const remaining = total_amount
-    const { rows } = await pool.query(
-      `INSERT INTO credits (name, instance_id, lender, total_amount, interest_rate, monthly_payment, payment_day, start_date, end_date, remaining_amount, comment)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-      [name, req.instanceId, lender || '', parseFloat(total_amount), parseFloat(interest_rate) || 0, parseFloat(monthly_payment) || 0, payment_day ? parseInt(payment_day) : null, start_date || null, end_date || null, remaining, comment || '']
-    )
-    res.status(201).json(rows[0])
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-app.put('/api/instances/:instanceId/credits/:creditId', authMiddleware, instanceMiddleware, async (req, res) => {
-  try {
-    const { name, lender, total_amount, interest_rate, monthly_payment, payment_day, start_date, end_date, comment } = req.body
-    if (!name) return res.status(400).json({ error: 'Name required' })
-    const { rows } = await pool.query(
-      `UPDATE credits SET name=$1, lender=$2, total_amount=$3, interest_rate=$4, monthly_payment=$5, payment_day=$6, start_date=$7, end_date=$8, comment=$9
-       WHERE id=$10 AND instance_id=$11 RETURNING *`,
-      [name, lender || '', parseFloat(total_amount) || 0, parseFloat(interest_rate) || 0, parseFloat(monthly_payment) || 0, payment_day ? parseInt(payment_day) : null, start_date || null, end_date || null, comment || '', req.params.creditId, req.instanceId]
-    )
-    if (!rows.length) return res.status(404).json({ error: 'Credit not found' })
-    res.json(rows[0])
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-app.delete('/api/instances/:instanceId/credits/:creditId', authMiddleware, instanceMiddleware, async (req, res) => {
-  try {
-    const { rowCount } = await pool.query('DELETE FROM credits WHERE id = $1 AND instance_id = $2', [req.params.creditId, req.instanceId])
-    if (!rowCount) return res.status(404).json({ error: 'Credit not found' })
-    res.json({ ok: true })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-app.get('/api/instances/:instanceId/credits/:creditId/payments', authMiddleware, instanceMiddleware, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT cp.*, c.name as credit_name
-       FROM credit_payments cp
-       JOIN credits c ON c.id = cp.credit_id
-       WHERE cp.credit_id = $1
-       ORDER BY cp.payment_date DESC, cp.id DESC`,
-      [req.params.creditId]
-    )
-  res.json(rows.map(r => ({
-    ...r,
-    amount: parseFloat(r.amount),
-    principal_amount: parseFloat(r.principal_amount),
-    interest_amount: parseFloat(r.interest_amount)
-  })))
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-app.get('/api/instances/:instanceId/credit-payments', authMiddleware, instanceMiddleware, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT cp.*, c.name as credit_name
-       FROM credit_payments cp
-       JOIN credits c ON c.id = cp.credit_id
-       WHERE c.instance_id = $1
-       ORDER BY cp.payment_date DESC, cp.id DESC
-       LIMIT 200`,
-      [req.instanceId]
-    )
-    res.json(rows.map(r => ({
-      ...r,
-      amount: parseFloat(r.amount),
-      principal_amount: parseFloat(r.principal_amount),
-      interest_amount: parseFloat(r.interest_amount)
-    })))
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-app.get('/api/instances/:instanceId/credits/:creditId/calculate-early', authMiddleware, instanceMiddleware, async (req, res) => {
-  try {
-    const { amount, strategy, payment_date } = req.query
-    const earlyAmount = parseFloat(amount)
-    const payDate = payment_date || new Date().toISOString().slice(0, 10)
-    if (!earlyAmount || earlyAmount <= 0) return res.status(400).json({ error: 'Valid amount required' })
-    if (!strategy || !['reduce_term', 'reduce_payment'].includes(strategy)) {
-      return res.status(400).json({ error: 'Strategy must be reduce_term or reduce_payment' })
-    }
-
-    const { rows: creditRows } = await pool.query('SELECT * FROM credits WHERE id = $1 AND instance_id = $2', [req.params.creditId, req.instanceId])
-    if (!creditRows.length) return res.status(404).json({ error: 'Credit not found' })
-    const credit = creditRows[0]
-
-    const remaining = parseFloat(credit.remaining_amount != null ? credit.remaining_amount : credit.total_amount)
-    const monthlyRate = parseFloat(credit.interest_rate) / 100 / 12
-    const currentMonthly = parseFloat(credit.monthly_payment)
-
-    if (earlyAmount >= remaining) {
-      return res.json({
-        current_remaining: remaining,
-        early_amount: earlyAmount,
-        new_remaining: 0,
-        months_saved: Infinity,
-        new_monthly_payment: 0,
-        overpayment: earlyAmount - remaining,
-        is_fully_paid: true
-      })
-    }
-
-    const newRemaining = remaining - earlyAmount
-
-    if (strategy === 'reduce_term' && currentMonthly > 0 && monthlyRate > 0) {
-      const monthsLeft = Math.ceil(Math.log(currentMonthly / (currentMonthly - newRemaining * monthlyRate)) / Math.log(1 + monthlyRate))
-      const origMonthsLeft = Math.ceil(Math.log(currentMonthly / (currentMonthly - remaining * monthlyRate)) / Math.log(1 + monthlyRate))
-      const monthsSaved = Math.max(origMonthsLeft - monthsLeft, 0)
-      const origTotal = currentMonthly * origMonthsLeft
-      const newTotal = currentMonthly * monthsLeft + earlyAmount
-      const interestSaved = Math.max(origTotal - remaining - (newTotal - newRemaining), 0)
-      res.json({
-        current_remaining: remaining, early_amount: earlyAmount, new_remaining: newRemaining,
-        strategy: 'reduce_term', months_saved: monthsSaved,
-        new_monthly_payment: currentMonthly, original_months_left: origMonthsLeft,
-        new_months_left: monthsLeft, interest_saved: Math.max(interestSaved, 0),
-        is_fully_paid: false, overpayment: 0
-      })
-    } else if (strategy === 'reduce_term') {
-      const monthsPaidOff = Math.floor(earlyAmount / currentMonthly)
-      res.json({
-        current_remaining: remaining, early_amount: earlyAmount, new_remaining: newRemaining,
-        strategy: 'reduce_term', months_saved: monthsPaidOff,
-        new_monthly_payment: currentMonthly, is_fully_paid: false, overpayment: 0
-      })
-    } else {
-      if (currentMonthly > 0 && monthlyRate > 0) {
-        const { rows: paidRows } = await pool.query(
-          "SELECT COUNT(*) as cnt FROM credit_payments WHERE credit_id = $1 AND payment_type = 'regular'",
-          [req.params.creditId]
-        )
-        const monthsPaid = parseInt(paidRows[0].cnt)
-        const origEnd = credit.end_date ? new Date(credit.end_date) : null
-        const startDate = credit.start_date ? new Date(credit.start_date) : new Date()
-        const totalMonthsOrig = origEnd ? Math.round((origEnd - startDate) / (1000 * 60 * 60 * 24 * 30.44)) : monthsPaid + Math.ceil(remaining / currentMonthly)
-        const remainingMonthsNew = totalMonthsOrig - monthsPaid
-        const newMonthly = remainingMonthsNew > 0 ? newRemaining / remainingMonthsNew : 0
-        const reduction = currentMonthly - newMonthly
-        res.json({
-          current_remaining: remaining, early_amount: earlyAmount, new_remaining: newRemaining,
-          strategy: 'reduce_payment', new_monthly_payment: Math.max(newMonthly, 0),
-          payment_reduction: Math.max(reduction, 0), is_fully_paid: false, overpayment: 0
-        })
-      } else {
-        const monthsLeft = Math.ceil(newRemaining / currentMonthly) || 0
-        res.json({
-          current_remaining: remaining, early_amount: earlyAmount, new_remaining: newRemaining,
-          strategy: 'reduce_payment', new_monthly_payment: monthsLeft > 0 ? newRemaining / monthsLeft : 0,
-          payment_reduction: 0, is_fully_paid: false, overpayment: 0
-        })
-      }
-    }
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-app.post('/api/instances/:instanceId/credits/:creditId/payments', authMiddleware, instanceMiddleware, async (req, res) => {
-  try {
-    const { amount, principal_amount, interest_amount, payment_date, comment, create_transaction, payment_type, early_strategy } = req.body
-    if (!amount || !payment_date) return res.status(400).json({ error: 'Amount and payment date required' })
-    const isEarly = payment_type === 'early'
-
-    const parseDateInput = (val) => {
-      if (!val) return new Date().toISOString().slice(0, 10)
-      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) return val
-      const months = { 'янв': '01', 'фев': '02', 'мар': '03', 'апр': '04', 'май': '05', 'мая': '05', 'июн': '06', 'июл': '07', 'авг': '08', 'сен': '09', 'окт': '10', 'ноя': '11', 'дек': '12' }
-      const match = typeof val === 'string' && val.match(/^(\d{1,2})\s+([а-яА-Яa-zA-Z]+)\s+(\d{4})/)
-      if (match) {
-        const day = match[1].padStart(2, '0')
-        const monKey = match[2].toLowerCase().slice(0, 3)
-        const month = months[monKey] || '01'
-        return `${match[3]}-${month}-${day}`
-      }
-      const d = new Date(val)
-      return isNaN(d.getTime()) ? new Date().toISOString().slice(0, 10) : d.toISOString().slice(0, 10)
-    }
-    const normDate = parseDateInput(payment_date)
-
-    const client = await pool.connect()
-    try {
-      await client.query('BEGIN')
-
-      const principal = parseFloat(principal_amount) || 0
-      const interest = parseFloat(interest_amount) || 0
-
-      const { rows } = await client.query(
-        `INSERT INTO credit_payments (credit_id, amount, principal_amount, interest_amount, payment_date, comment, payment_type, early_strategy)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [req.params.creditId, parseFloat(amount), principal, interest, normDate, comment || '', isEarly ? 'early' : 'regular', isEarly ? (early_strategy || 'reduce_term') : null]
-      )
-
-      await client.query(
-        'UPDATE credits SET remaining_amount = GREATEST(COALESCE(remaining_amount, total_amount) - $1, 0) WHERE id = $2',
-        [principal || parseFloat(amount), req.params.creditId]
-      )
-
-      if (create_transaction) {
-        const { rows: creditRows } = await client.query('SELECT name FROM credits WHERE id = $1', [req.params.creditId])
-        const creditName = creditRows[0]?.name || 'Кредит'
-        const txId = 'tx-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
-        const catId = await resolveCategoryId(client, req.instanceId, 'кредиты', 'expense')
-        await client.query(
-          `INSERT INTO transactions (id, name, date, type, amount, category_id, comment, instance_id)
-           VALUES ($1, $2, $3, 'expense', $4, $5, $6, $7)`,
-          [txId, 'Платёж по кредиту: ' + creditName, normDate, parseFloat(amount), catId, `Основной долг: ${principal.toFixed(2)}, Проценты: ${interest.toFixed(2)}`, req.instanceId]
-        )
-      }
-
-      await client.query('COMMIT')
-      res.status(201).json(rows[0])
-    } catch (err) {
-      await client.query('ROLLBACK')
-      throw err
-    } finally {
-      client.release()
-    }
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-app.delete('/api/instances/:instanceId/credits/:creditId/payments/:paymentId', authMiddleware, instanceMiddleware, async (req, res) => {
-  try {
-    const { rows: paymentRows } = await pool.query(
-      'DELETE FROM credit_payments WHERE id = $1 AND credit_id = $2 RETURNING *',
-      [req.params.paymentId, req.params.creditId]
-    )
-    if (!paymentRows.length) return res.status(404).json({ error: 'Payment not found' })
-    const payment = paymentRows[0]
-    await pool.query(
-      'UPDATE credits SET remaining_amount = remaining_amount + $1 WHERE id = $2',
-      [parseFloat(payment.principal_amount) || parseFloat(payment.amount), req.params.creditId]
-    )
-    res.json({ ok: true })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
+// Credits functionality has been deprecated and removed.
+app.get('/api/instances/:instanceId/credits', (req, res) => res.json([]))
+app.get('/api/instances/:instanceId/credit-payments', (req, res) => res.json([]))
 
 // ==================== CATEGORIES (instance-scoped) ====================
 
@@ -2511,7 +2760,7 @@ app.post('/api/instances/:instanceId/parse-receipt', authMiddleware, instanceMid
 Текст чека:
 ${text}`
     const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3073,7 +3322,7 @@ ${creditsSummary || 'Кредитов нет'}
 - Используй GitHub Markdown formatting.`
 
     const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3204,9 +3453,9 @@ app.get('/api/health', async (req, res) => {
 
 import { startBot } from './bot.js'
 
-// Initialize demo mode & background cleanup timer
-initDemoAccounts().catch(console.error)
-setInterval(cleanupExpiredDemoSessions, 30 * 1000)
+// Start scheduled backups runner (hourly)
+setInterval(runScheduledBackups, 60 * 60 * 1000)
+runScheduledBackups().catch(console.error)
 
 // Start Telegram Bot Polling
 startBot()

@@ -21,10 +21,28 @@ export function verifyToken(token) {
   return jwt.verify(token, JWT_SECRET)
 }
 
-export function authMiddleware(req, res, next) {
+export async function authMiddleware(req, res, next) {
+  // 1. Check API key first from header or query param
+  const apiKey = req.headers['x-api-key'] || req.query.api_key || req.query.key
+  if (apiKey) {
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, username, is_admin, plan, plan_expires_at, api_key FROM users WHERE api_key = $1',
+        [apiKey]
+      )
+      if (rows.length) {
+        req.user = rows[0]
+        return next()
+      }
+    } catch (err) {
+      console.error('[API Key Auth Error]', err)
+    }
+  }
+
+  // 2. Check Bearer token (JWT)
   const auth = req.headers.authorization
   if (!auth || !auth.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Отсутствует токен' })
+    return res.status(401).json({ error: 'Отсутствует токен авторизации или API-ключ' })
   }
   try {
     const payload = verifyToken(auth.slice(7))
@@ -35,7 +53,21 @@ export function authMiddleware(req, res, next) {
   }
 }
 
-export function optionalAuthMiddleware(req, res, next) {
+export async function optionalAuthMiddleware(req, res, next) {
+  const apiKey = req.headers['x-api-key'] || req.query.api_key || req.query.key
+  if (apiKey) {
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, username, is_admin, plan, plan_expires_at, api_key FROM users WHERE api_key = $1',
+        [apiKey]
+      )
+      if (rows.length) {
+        req.user = rows[0]
+        return next()
+      }
+    } catch {}
+  }
+
   const auth = req.headers.authorization
   if (auth && auth.startsWith('Bearer ')) {
     try {

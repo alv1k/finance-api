@@ -329,6 +329,12 @@ td.amt.exp{color:var(--red2)}td.amt.inc{color:var(--green2)}
 const API=''
 let token=localStorage.getItem('token')
 let user=null,instances=[],curInst=null,curPage='dashboard'
+let isLocalMode=false
+let localInstanceId=localStorage.getItem('tiin_local_inst_id')
+if(!localInstanceId){
+  localInstanceId='INST-'+Math.random().toString(36).substring(2,8).toUpperCase()
+  localStorage.setItem('tiin_local_inst_id',localInstanceId)
+}
 
 // URL params (auth_token from bot, target inst, prefill data)
 let up=new URLSearchParams(location.search)
@@ -555,7 +561,192 @@ function getDateVal(el) {
   return el.value;
 }
 
+// ==================== LOCAL-FIRST STATE & API INTERCEPTOR ====================
+function getLocalTxs(){
+  try { return JSON.parse(localStorage.getItem('tiin_local_txs') || '[]') } catch(e) { return [] }
+}
+function setLocalTxs(txs){
+  localStorage.setItem('tiin_local_txs', JSON.stringify(txs))
+}
+function getLocalCats(){
+  try {
+    var c = JSON.parse(localStorage.getItem('tiin_local_cats') || '[]')
+    if (c && c.length) return c
+  } catch(e) {}
+  var defaults = [
+    { id: 1, name: 'продукты', type: 'expense', is_default: true },
+    { id: 2, name: 'ЖКУ', type: 'expense', is_default: true },
+    { id: 3, name: 'автомобиль', type: 'expense', is_default: true },
+    { id: 4, name: 'здоровье', type: 'expense', is_default: true },
+    { id: 5, name: 'развлечения', type: 'expense', is_default: true },
+    { id: 6, name: 'связь', type: 'expense', is_default: true },
+    { id: 7, name: 'одежда', type: 'expense', is_default: true },
+    { id: 8, name: 'готовая еда', type: 'expense', is_default: true },
+    { id: 9, name: 'доставка товаров', type: 'expense', is_default: true },
+    { id: 10, name: 'проезд в автобусах', type: 'expense', is_default: true },
+    { id: 11, name: 'зарплата', type: 'income', is_default: true },
+    { id: 12, name: 'другой доход', type: 'income', is_default: true },
+    { id: 14, name: 'без классификации', type: 'expense', is_default: true }
+  ]
+  localStorage.setItem('tiin_local_cats', JSON.stringify(defaults))
+  return defaults
+}
+function setLocalCats(cats){
+  localStorage.setItem('tiin_local_cats', JSON.stringify(cats))
+}
+function getLocalSavings(){
+  try { return JSON.parse(localStorage.getItem('tiin_local_savings') || '[]') } catch(e) { return [] }
+}
+function setLocalSavings(s){
+  localStorage.setItem('tiin_local_savings', JSON.stringify(s))
+}
+
+function handleLocalApi(path, opts){
+  var m = (opts && opts.method) || 'GET'
+
+  if(path === 'api/auth/me'){
+    return Promise.resolve(user || { id: 'local', username: 'Гость ('+localInstanceId+')', is_local: true })
+  }
+  if(path === 'api/instances'){
+    if(m === 'GET'){
+      return Promise.resolve(instances || [{ id: localInstanceId, name: 'Бюджет #'+localInstanceId, role: 'owner', is_local: true }])
+    }
+  }
+  if(path.indexOf('/categories') !== -1){
+    if(m === 'GET') return Promise.resolve(getLocalCats())
+    if(m === 'POST'){
+      var b = JSON.parse((opts && opts.body) || '{}')
+      var cats = getLocalCats()
+      var newCat = { id: Date.now(), name: String(b.name || '').trim(), type: b.type || 'expense', is_default: false }
+      cats.push(newCat)
+      setLocalCats(cats)
+      return Promise.resolve(newCat)
+    }
+  }
+  if(path.indexOf('/dashboard') !== -1){
+    var txs = getLocalTxs()
+    var expTotal = 0, incTotal = 0, savTotal = 0
+    var expCount = 0, incCount = 0, savCount = 0
+    var byCatMap = {}
+
+    for(var i=0; i<txs.length; i++){
+      var t = txs[i]
+      var amt = Math.abs(parseFloat(t.amount) || 0)
+      if(t.type === 'expense'){
+        expTotal += amt; expCount++
+        var cName = t.category || 'без классификации'
+        byCatMap[cName] = (byCatMap[cName] || 0) + amt
+      } else if(t.type === 'income'){
+        incTotal += amt; incCount++
+      } else if(t.type === 'savings'){
+        savTotal += amt; savCount++
+      }
+    }
+    var byCatArr = Object.keys(byCatMap).map(function(k){
+      return { category: k, total: byCatMap[k], count: 1, type: 'expense' }
+    })
+    return Promise.resolve({
+      period: { period: 'all', year: new Date().getFullYear(), month: new Date().getMonth()+1 },
+      summary: {
+        expense: { total: expTotal, count: expCount },
+        income: { total: incTotal, count: incCount },
+        savings: { total: savTotal, count: savCount },
+        withdrawals: { total: 0, count: 0 },
+        savingsIn: { total: savTotal, count: savCount },
+        credits: { total: 0, count: 0 },
+        balance: incTotal - expTotal - savTotal
+      },
+      byCategory: byCatArr,
+      byMonth: [],
+      recent: txs.slice(0, 10)
+    })
+  }
+  if(path.indexOf('/transactions') !== -1){
+    var txs = getLocalTxs()
+    var txMatch = path.match(/transactions\/([^\/?]+)/)
+    if(txMatch && txMatch[1] && txMatch[1] !== 'summary'){
+      var txId = txMatch[1]
+      if(m === 'DELETE'){
+        txs = txs.filter(function(t){ return String(t.id) !== String(txId) })
+        setLocalTxs(txs)
+        return Promise.resolve({ ok: true })
+      }
+      if(m === 'PUT'){
+        var b = JSON.parse((opts && opts.body) || '{}')
+        for(var i=0; i<txs.length; i++){
+          if(String(txs[i].id) === String(txId)){
+            txs[i] = Object.assign(txs[i], b)
+            break
+          }
+        }
+        setLocalTxs(txs)
+        return Promise.resolve({ ok: true })
+      }
+    }
+    if(m === 'GET'){
+      var dummyUrl = new URL('http://localhost/' + path)
+      var fType = dummyUrl.searchParams.get('type')
+      var fCat = dummyUrl.searchParams.get('category_id')
+      var fFrom = dummyUrl.searchParams.get('from')
+      var fTo = dummyUrl.searchParams.get('to')
+      var fSearch = dummyUrl.searchParams.get('search')
+      var fExType = dummyUrl.searchParams.get('exclude_type')
+
+      var filtered = txs.filter(function(t){
+        if(fExType && t.type === fExType) return false
+        if(fType && t.type !== fType) return false
+        if(fCat && String(t.category_id) !== String(fCat)) return false
+        if(fFrom && t.date < fFrom) return false
+        if(fTo && t.date > fTo) return false
+        if(fSearch && (String(t.name||'') + ' ' + String(t.comment||'')).toLowerCase().indexOf(fSearch.toLowerCase()) === -1) return false
+        return true
+      })
+      return Promise.resolve({ data: filtered, total: filtered.length })
+    }
+    if(m === 'POST'){
+      var b = JSON.parse((opts && opts.body) || '{}')
+      var newTx = Object.assign({
+        id: 'loc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        date: new Date().toISOString().slice(0, 10),
+        created_at: new Date().toISOString()
+      }, b)
+      txs.unshift(newTx)
+      setLocalTxs(txs)
+      return Promise.resolve(newTx)
+    }
+  }
+  if(path.indexOf('/savings') !== -1){
+    var savs = getLocalSavings()
+    if(m === 'GET') return Promise.resolve(savs)
+    if(m === 'POST'){
+      var b = JSON.parse((opts && opts.body) || '{}')
+      var newGoal = Object.assign({ id: Date.now(), current_amount: 0 }, b)
+      savs.push(newGoal)
+      setLocalSavings(savs)
+      return Promise.resolve(newGoal)
+    }
+  }
+  if(path.indexOf('/shopping') !== -1){
+    return Promise.resolve([])
+  }
+  if(path.indexOf('/accounts') !== -1){
+    return Promise.resolve([{ id: 1, name: 'Основной', currency: 'RUB', type: 'card' }])
+  }
+  if(path.indexOf('/user/plan') !== -1){
+    return Promise.resolve({
+      plan: { name: 'Локальный бюджет', badge: 'LOCAL', is_admin: false },
+      usage: { instancesCount: 1, instanceTransactionsCount: getLocalTxs().length }
+    })
+  }
+
+  return undefined
+}
+
 async function api(path,opts){
+  if(isLocalMode){
+    var localRes = handleLocalApi(path, opts)
+    if(localRes !== undefined) return localRes
+  }
   const h={'Content-Type':'application/json'}
   if(token)h.Authorization='Bearer '+token
   const r=await fetch(API+path,Object.assign({},opts,{headers:Object.assign({},h,opts&&opts.headers)}))
@@ -658,613 +849,478 @@ function fixModalTop(overlay){
 }
 function mclose(){var o=document.querySelectorAll('.modal-overlay.active');if(o.length)o[o.length-1].remove()}
 
-// ==================== AUTH ====================
+// ==================== LOCAL-FIRST & AUTH ====================
+
+function initLocalInstance(){
+  isLocalMode = true
+  user = { id: 'local', username: 'Гость ('+localInstanceId+')', is_local: true }
+  curInst = { id: localInstanceId, name: 'Бюджет #'+localInstanceId, role: 'owner', is_local: true }
+  instances = [curInst]
+
+  loadCategories().then(function(){
+    renderApp()
+    checkOnboarding()
+  })
+}
+
 function renderLanding(){
-  var a=document.getElementById('app')
-  a.innerHTML=''
-  a.className='landing-page'
-  
-  var hdr=el('div',{className:'landing-hdr'},[
-    el('div',{className:'landing-logo'},[el('img',{src:'/favicon.png',style:'height:30px'}),'TIIN Finance']),
-    el('button',{className:'landing-login-btn',onclick:function(){showAuthModal(false)}},'Войти')
-  ])
-  
-  var hero=el('div',{className:'landing-hero'},[
-    el('div',{className:'hero-badge'},'✨ Умный учет финансов нового поколения'),
-    el('h1',{className:'hero-title'},'Управляйте финансами легко и красиво'),
-    el('p',{className:'hero-subtitle'},'Интуитивный трекер расходов, совместный бюджет и умное сканирование чеков в реальном времени.'),
-    urlPrefill?el('div',{className:'notice',style:'margin-bottom:24px;font-size:15px;background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3);padding:14px;border-radius:14px'},'📋 Ваш чек успешно обработан! Войдите в гостевой режим, чтобы посмотреть транзакцию.'):null,
-    el('div',{style:'display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:32px'},[
-      el('button',{className:'hero-btn-primary',onclick:showDemoModal},'🎮 Войти как гость (Демо)'),
-      el('a',{
-        href:'https://t.me/FinanceTiinServiceBot',
-        target:'_blank',
-        className:'hero-btn-secondary'
-      },[el('span',{style:'font-size:18px'},'📱'),' Telegram Бот'])
-    ])
-  ])
-
-  // Donation Block for Lifetime Access
-  var remainingSpotsEl = el('div',{style:'font-size:22px;font-weight:700;color:#4ade80'},'Загрузка...')
-
-  api('api/donations/stats')
-    .then(function(s){
-      remainingSpotsEl.textContent = s.remaining_spots + ' из ' + s.total_spots
-    })
-    .catch(function(){
-      remainingSpotsEl.textContent = 'Ограничено'
-    })
-
-  var donationCard=el('div',{className:'landing-donation-card'},[
-    el('div',{style:'display:inline-block;padding:5px 14px;background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.3);border-radius:20px;font-size:11px;font-weight:700;letter-spacing:0.5px;margin-bottom:14px'},'🔥 РАННИЙ ДОСТУП • ОГРАНИЧЕННОЕ ПРЕДЛОЖЕНИЕ'),
-    el('h2',{style:'font-size:24px;font-weight:800;margin-bottom:10px;color:#f8fafc'},'Получите пожизненный доступ к TIIN Finance'),
-    el('p',{style:'color:#94a3b8;font-size:14px;margin-bottom:20px;line-height:1.6;max-width:540px;margin-left:auto;margin-right:auto'},'Поддержите разработчика и получите персональный аккаунт без подписок и ограничений по времени.'),
-    el('div',{style:'display:flex;align-items:center;justify-content:center;gap:20px;margin-bottom:24px;flex-wrap:wrap'},[
-      el('div',{style:'background:rgba(255,255,255,0.03);padding:12px 20px;border-radius:14px;border:1px solid rgba(255,255,255,0.08)'},[
-        el('div',{style:'font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px'},'Осталось мест'),
-        remainingSpotsEl
-      ]),
-      el('div',{style:'background:rgba(255,255,255,0.03);padding:12px 20px;border-radius:14px;border:1px solid rgba(255,255,255,0.08)'},[
-        el('div',{style:'font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px'},'Сумма доната'),
-        el('div',{style:'font-size:22px;font-weight:700;color:#818cf8;margin-top:2px'},'от 500 ₽')
-      ])
-    ]),
-    el('button',{
-      className:'primary',
-      style:'padding:14px 32px;font-size:15px;background:linear-gradient(135deg, #22c55e, #16a34a);color:#fff;font-weight:700;border-radius:12px;box-shadow:0 8px 24px rgba(34,197,94,0.3)',
-      onclick:showDonateModal
-    },'❤️ Поддержать и получить доступ')
-  ])
-
-  var features=el('div',{className:'landing-features'},[
-    el('div',{className:'feature-card'},[
-      el('div',{className:'f-icon'},'🧾'),
-      el('h3',{},'Умное сканирование'),
-      el('p',{},'Добавляйте чеки через Telegram, а алгоритм сам распишет товары и подберет подходящие категории.')
-    ]),
-    el('div',{className:'feature-card'},[
-      el('div',{className:'f-icon'},'🤝'),
-      el('h3',{},'Совместный бюджет'),
-      el('p',{},'Создавайте инстансы для семьи или проекта и ведите единый учет расходов и доходов.')
-    ]),
-    el('div',{className:'feature-card'},[
-      el('div',{className:'f-icon'},'📊'),
-      el('h3',{},'Наглядная аналитика'),
-      el('p',{},'Интерактивные графики и фильтры по месяцам помогут легко выявить скрытые статьи трат.')
-    ])
-  ])
-  
-  var pricingSection=el('div',{style:'margin:20px 0 50px'},[
-    el('div',{style:'text-align:center;margin-bottom:32px'},[
-      el('h2',{style:'font-size:32px;font-weight:800;color:#f8fafc;letter-spacing:-1px;margin-bottom:8px'},'Гибкие тарифные планы'),
-      el('p',{style:'color:#94a3b8;font-size:16px'},'Выберите подходящий уровень возможностей для ваших финансов')
-    ]),
-    el('div',{className:'pricing-grid'},[
-      // Demo Card
-      el('div',{className:'pricing-card'},[
-        el('div',{className:'p-name'},'🎮 Демо-доступ'),
-        el('div',{className:'p-desc'},'Быстрый просмотр без регистрации на готовых данных'),
-        el('div',{className:'p-price'},['0 ₽ ',el('span',{},'/ 20 мин')]),
-        el('ul',{className:'p-features'},[
-          el('li',{},[el('span',{className:'check'},'✓'),' Готовые тестовые данные']),
-          el('li',{},[el('span',{className:'check'},'✓'),' 1 бюджет (без создания новых)']),
-          el('li',{},[el('span',{className:'check'},'✓'),' 3 сканирования чеков']),
-          el('li',{className:'disabled'},[el('span',{className:'check'},'✕'),' Сохранение данных'])
-        ]),
-        el('button',{className:'pricing-btn btn-ghost',onclick:showDemoModal},'Попробовать демо')
-      ]),
-      // Free Card
-      el('div',{className:'pricing-card'},[
-        el('div',{className:'p-name'},'🆓 Free Тариф'),
-        el('div',{className:'p-desc'},'Полноценный личный аккаунт с базовыми лимитами'),
-        el('div',{className:'p-price'},['0 ₽ ',el('span',{},'/ навсегда')]),
-        el('ul',{className:'p-features'},[
-          el('li',{},[el('span',{className:'check'},'✓'),' Свой личный аккаунт']),
-          el('li',{},[el('span',{className:'check'},'✓'),' 1 бюджет (инстанс)']),
-          el('li',{},[el('span',{className:'check'},'✓'),' До 150 транзакций']),
-          el('li',{},[el('span',{className:'check'},'✓'),' До 10 сканирований чеков']),
-          el('li',{className:'disabled'},[el('span',{className:'check'},'✕'),' AI-Советник расходов'])
-        ]),
-        el('button',{className:'pricing-btn btn-ghost',onclick:function(){showAuthModal(true)}},'Зарегистрироваться')
-      ]),
-      // PRO Card (Popular)
-      el('div',{className:'pricing-card popular'},[
-        el('div',{className:'pricing-badge'},'🔥 Популярный'),
-        el('div',{className:'p-name'},'⚡ PRO Личный'),
-        el('div',{className:'p-desc'},'Полная свобода учета и умный AI-помощник'),
-        el('div',{className:'p-price'},['190 ₽ ',el('span',{},'/ мес')]),
-        el('ul',{className:'p-features'},[
-          el('li',{},[el('span',{className:'check'},'✓'),' До 3 бюджетов (инстансов)']),
-          el('li',{},[el('span',{className:'check'},'✓'),' Безлимитные транзакции']),
-          el('li',{},[el('span',{className:'check'},'✓'),' 50 сканирований чеков / мес']),
-          el('li',{},[el('span',{className:'check'},'✓'),' 10 AI-советов в месяц']),
-          el('li',{},[el('span',{className:'check'},'✓'),' Импорт выписок из банков (XLSX)'])
-        ]),
-        el('button',{className:'pricing-btn btn-primary',disabled:true,style:'opacity:0.6;cursor:not-allowed;box-shadow:none'},'Скоро')
-      ]),
-      // Family Card
-      el('div',{className:'pricing-card'},[
-        el('div',{className:'p-name'},'👨‍👩‍👧‍👦 Семья & Бизнес'),
-        el('div',{className:'p-desc'},'Совместный учет и расширенные лимиты'),
-        el('div',{className:'p-price'},['390 ₽ ',el('span',{},'/ мес')]),
-        el('ul',{className:'p-features'},[
-          el('li',{},[el('span',{className:'check'},'✓'),' До 10 бюджетов (инстансов)']),
-          el('li',{},[el('span',{className:'check'},'✓'),' 150 сканирований чеков / мес']),
-          el('li',{},[el('span',{className:'check'},'✓'),' 30 AI-советов в месяц']),
-          el('li',{},[el('span',{className:'check'},'✓'),' Совместный доступ (до 5 участников)'])
-        ]),
-        el('button',{className:'pricing-btn btn-ghost',disabled:true,style:'opacity:0.6;cursor:not-allowed'},'Скоро')
-      ])
-    ])
-  ])
-  
-  var content=el('div',{className:'landing-content'},[hdr,hero,pricingSection,donationCard,features])
-  var bg=el('div',{className:'landing-bg'},[
-    el('div',{className:'shape shape-1'}),
-    el('div',{className:'shape shape-2'}),
-    el('div',{className:'shape shape-3'})
-  ])
-  
-  a.appendChild(bg)
-  a.appendChild(content)
-  
-  if(urlPrefill) {
-     setTimeout(function(){ showDemoModal() }, 500);
-  }
+  initLocalInstance()
 }
 
-function showDonateModal(){
-  mclose()
-  var wrap = el('div',{},[
-    el('p',{style:'margin-bottom:16px;font-size:14px;color:var(--text2);line-height:1.5'},'Поддержите проект донатом (от 500 ₽) и забронируйте персональный аккаунт навсегда.'),
-    el('div',{style:'background:var(--surface2);padding:16px;border-radius:var(--rs);border:1px solid var(--border);margin-bottom:16px'},[
-      el('div',{style:'font-size:12px;color:var(--text3);margin-bottom:4px'},'Реквизиты для перевода (СБП / Карта):'),
-      el('div',{style:'font-size:16px;font-weight:700;font-family:monospace;color:var(--accent2);margin-bottom:4px'},'+7 999 123 45 67'),
-      el('div',{style:'font-size:12px;color:var(--text2)'},'Т-Банк / Сбербанк (Алексей В.)')
-    ]),
-    el('div',{className:'form-group',style:'margin-bottom:12px'},[
-      el('label',{},'Желаемый логин аккаунта:'),
-      el('input',{id:'don-username',type:'text',placeholder:'Например: alex_finance'})
-    ]),
-    el('div',{className:'form-group',style:'margin-bottom:12px'},[
-      el('label',{},'Ваш Telegram или Email для отправки доступов:'),
-      el('input',{id:'don-contact',type:'text',placeholder:'@username или email'})
-    ]),
-    el('div',{className:'form-group',style:'margin-bottom:12px'},[
-      el('label',{},'Сумма доната (руб):'),
-      el('input',{id:'don-amount',type:'number',placeholder:'500'})
+function checkOnboarding(){
+  if(localStorage.getItem('tiin_welcome_seen')) return
 
-    ]),
-    el('div',{className:'form-group',style:'margin-bottom:16px'},[
-      el('label',{},'Комментарий к заявке (опционально):'),
-      el('input',{id:'don-comment',type:'text',placeholder:'Пожелания или вопрос'})
-    ]),
-    el('button',{
-      className:'primary',
-      style:'width:100%;padding:12px;font-size:15px',
-      onclick:function(){
-        var username = document.getElementById('don-username').value
-        var contact = document.getElementById('don-contact').value
-        var amount = document.getElementById('don-amount').value
-        var comment = document.getElementById('don-comment').value
-        
-        if(!username) return toast('Укажите желаемый логин','err')
-        if(!contact) return toast('Укажите контакт для связи','err')
-        
-        api('api/donations/apply',{
-          method:'POST',
-          body:JSON.stringify({
-            desired_username: username,
-            contact_info: contact,
-            donation_amount: amount,
-            comment: comment
-          })
-        }).then(function(d){
-          toast(d.message, 'ok')
+  var wrap = el('div',{style:'text-align:center;padding:12px 4px;'},[
+    el('div',{style:'font-size:46px;margin-bottom:12px'},'👋'),
+    el('h2',{style:'font-size:22px;font-weight:800;margin-bottom:10px;color:var(--text)'},'Добро пожаловать в TIIN Finance!'),
+    el('p',{style:'color:var(--text2);font-size:14px;line-height:1.6;margin-bottom:24px;max-width:380px;margin-left:auto;margin-right:auto'},
+      'Если вы уже заполняли данные ранее, зайдите с того устройства где это было или войдите для синхронизации. Либо начните прямо сейчас на этом устройстве локально.'
+    ),
+    el('div',{style:'display:flex;gap:12px;justify-content:center;flex-wrap:wrap'},[
+      el('button',{
+        className:'primary',
+        style:'flex:1;min-width:140px;padding:12px 18px;font-size:15px;font-weight:700;',
+        onclick:function(){
           mclose()
-          renderLanding()
-        }).catch(function(e){
-          toast(e.message, 'err')
-        })
-      }
-    },'✅ Я перевел(а) донат, отправить заявку')
+          showSaveToServerModal(true)
+        }
+      },'🔑 Зайти в аккаунт'),
+      el('button',{
+        className:'ghost',
+        style:'flex:1;min-width:140px;padding:12px 18px;font-size:15px;border:1px solid var(--border)',
+        onclick:function(){
+          mclose()
+          startTourGuide()
+        }
+      },'Отмена (Начать тут)')
+    ])
   ])
-  modal('🎁 Пожизненный доступ (1 из 10 мест)', wrap, {centered:true, style:'max-width:460px'})
+
+  modal('Вход и синхронизация', wrap, {centered:true, style:'max-width:440px'})
 }
 
+function startTourGuide(){
+  var tourSteps = [
+    {
+      icon: '📊',
+      title: 'Быстрый учет финансов',
+      desc: 'Добавляйте доходы и расходы в один клик. Приложение автоматически группирует статьи трат, считает баланс и строит графики за любой период.'
+    },
+    {
+      icon: '🧾',
+      title: 'Умное сканирование чеков',
+      desc: 'Отправляйте фото чеков в Telegram-бота: алгоритм сам распознает товары, цены и аккуратно разложит покупки по нужным категориям.'
+    },
+    {
+      icon: '💾',
+      title: 'Сохранение и авто-бэкапы',
+      desc: 'Сейчас ваши данные сохраняются прямо в браузере. В любой момент нажмите «Сохранить на сервер», чтобы не потерять историю и настроить регулярные бэкапы на Email.'
+    }
+  ]
 
+  var currentStep = 0
+
+  function renderStep(idx){
+    var step = tourSteps[idx]
+    var isLast = idx === tourSteps.length - 1
+
+    var dots = []
+    for(var i=0; i<tourSteps.length; i++){
+      dots.push(el('div',{
+        style:'width:'+(i===idx?'24px':'8px')+';height:6px;border-radius:3px;background:'+(i===idx?'var(--accent)':'var(--surface2)')+';transition:all 0.3s;'
+      }))
+    }
+
+    var wrap = el('div',{style:'text-align:center;padding:12px 4px;'},[
+      el('div',{style:'font-size:48px;margin-bottom:12px'},step.icon),
+      el('div',{style:'display:flex;justify-content:center;gap:6px;margin-bottom:16px'},dots),
+      el('h3',{style:'font-size:19px;font-weight:700;margin-bottom:10px;color:var(--text)'},step.title),
+      el('p',{style:'color:var(--text2);font-size:14px;line-height:1.6;margin-bottom:26px;min-height:64px'},step.desc),
+      el('div',{style:'display:flex;gap:12px;justify-content:space-between;align-items:center'},[
+        el('button',{
+          className:'ghost sm',
+          style:'color:var(--text3)',
+          onclick:function(){
+            localStorage.setItem('tiin_welcome_seen', '1')
+            mclose()
+          }
+        },'Пропустить'),
+        el('button',{
+          className:'primary sm',
+          style:'padding:10px 24px;font-weight:700;font-size:14px',
+          onclick:function(){
+            if(isLast){
+              localStorage.setItem('tiin_welcome_seen', '1')
+              mclose()
+            } else {
+              currentStep++
+              renderStep(currentStep)
+            }
+          }
+        }, isLast ? 'Начать работу 🎉' : 'Далее →')
+      ])
+    ])
+
+    modal('Возможности сервиса ('+(idx+1)+'/'+tourSteps.length+')', wrap, {centered:true, style:'max-width:440px'})
+  }
+
+  renderStep(currentStep)
+}
+
+function showSaveToServerModal(isLoginOnly){
+  mclose()
+  var authTab = 'email'
+  var cooldownSec = 0
+  var timerInterval = null
+  var tgPollInterval = null
+
+  var wrap = el('div',{})
+
+  function renderModalBody(){
+    wrap.innerHTML = ''
+
+    var tabs = el('div',{style:'display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:12px'},[
+      el('button',{
+        className: 'sm ' + (authTab==='email'?'primary':'ghost'),
+        style: 'flex:1',
+        onclick: function(){ authTab='email'; renderModalBody() }
+      }, '📧 Email с кодом'),
+      el('button',{
+        className: 'sm ' + (authTab==='telegram'?'primary':'ghost'),
+        style: 'flex:1',
+        onclick: function(){ authTab='telegram'; renderModalBody() }
+      }, '✈️ Telegram в 1 клик')
+    ])
+    wrap.appendChild(tabs)
+
+    if(authTab === 'email'){
+      var emailDesc = isLoginOnly
+        ? 'Введите ваш Email для входа и загрузки сохраненного бюджета.'
+        : 'Сохраните ваш текущий бюджет в облако и настройте отправку регулярных бэкапов.'
+
+      wrap.appendChild(el('p',{style:'font-size:14px;color:var(--text2);margin-bottom:16px;line-height:1.5'}, emailDesc))
+
+      var emailInput = el('input',{id:'auth-email',type:'email',placeholder:'name@example.com',style:'margin-bottom:10px'})
+      var btnSendCode = el('button',{
+        id: 'btn-req-code',
+        className: 'ghost sm',
+        style: 'margin-bottom:14px;width:100%;font-weight:600;border:1px solid var(--accent);color:var(--accent2)',
+        onclick: function(){
+          var mail = emailInput.value.trim().toLowerCase()
+          if(!mail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)){
+            return toast('Пожалуйста, введите корректный Email', 'err')
+          }
+          btnSendCode.disabled = true
+          btnSendCode.textContent = 'Отправка...'
+          api('api/auth/email/request-code',{
+            method:'POST',
+            body:JSON.stringify({email: mail})
+          }).then(function(d){
+            toast('Код отправлен на '+mail, 'ok')
+            cooldownSec = 60
+            if(timerInterval) clearInterval(timerInterval)
+            timerInterval = setInterval(function(){
+              cooldownSec--
+              if(cooldownSec <= 0){
+                clearInterval(timerInterval)
+                btnSendCode.disabled = false
+                btnSendCode.textContent = 'Отправить код повторно'
+              } else {
+                btnSendCode.disabled = true
+                btnSendCode.textContent = 'Повтор через ' + cooldownSec + ' сек.'
+              }
+            }, 1000)
+          }).catch(function(e){
+            btnSendCode.disabled = false
+            btnSendCode.textContent = 'Получить код подтверждения'
+            toast(e.message, 'err')
+          })
+        }
+      }, 'Получить 6-значный код')
+
+      wrap.appendChild(el('div',{className:'form-group'},[
+        el('label',{},'Ваш Email:'),
+        emailInput,
+        btnSendCode
+      ]))
+
+      var codeInput = el('input',{
+        id:'auth-otp',
+        type:'text',
+        placeholder:'••••••',
+        maxLength:6,
+        style:'text-align:center;font-size:22px;letter-spacing:6px;font-family:monospace;margin-bottom:16px'
+      })
+      wrap.appendChild(el('div',{className:'form-group'},[
+        el('label',{},'6-значный код из письма:'),
+        codeInput
+      ]))
+
+      var backupSelect = el('select',{id:'auth-backup-freq'},[
+        el('option',{value:'none'},'Не отправлять бэкапы'),
+        el('option',{value:'weekly',selected:true},'Еженедельный бэкап на этот Email'),
+        el('option',{value:'monthly'},'Ежемесячный бэкап на этот Email')
+      ])
+
+      if(!isLoginOnly){
+        wrap.appendChild(el('div',{className:'form-group',style:'margin-bottom:18px'},[
+          el('label',{},'Резервная копия бюджета:'),
+          backupSelect
+        ]))
+      }
+
+      var btnSubmit = el('button',{
+        className: 'primary',
+        style: 'width:100%;padding:13px;font-size:15px;font-weight:700',
+        onclick: function(){
+          var mail = emailInput.value.trim().toLowerCase()
+          var code = codeInput.value.trim()
+          var freq = backupSelect.value || 'none'
+          if(!mail) return toast('Укажите Email', 'err')
+          if(!code || code.length !== 6) return toast('Введите 6-значный код', 'err')
+
+          btnSubmit.disabled = true
+          btnSubmit.textContent = 'Синхронизация...'
+
+          var payload = {
+            email: mail,
+            code: code,
+            backup_frequency: freq
+          }
+
+          if(isLocalMode && getLocalTxs().length > 0){
+            payload.local_data = {
+              instance_name: curInst ? curInst.name : ('Бюджет #'+localInstanceId),
+              transactions: getLocalTxs(),
+              categories: getLocalCats()
+            }
+          }
+
+          api('api/auth/email/verify-and-sync',{
+            method:'POST',
+            body:JSON.stringify(payload)
+          }).then(function(d){
+            token = d.token
+            localStorage.setItem('token', token)
+            localStorage.setItem('tiin_welcome_seen', '1')
+            isLocalMode = false
+            user = d.user
+            curInst = d.instance
+            if(timerInterval) clearInterval(timerInterval)
+            mclose()
+            toast(d.is_new_user ? 'Аккаунт создан и данные перенесены в облако!' : 'Успешный вход в облако!', 'ok')
+            loadCategories().then(function(){ return loadInsts() }).then(function(){ renderApp() })
+          }).catch(function(e){
+            btnSubmit.disabled = false
+            btnSubmit.textContent = isLoginOnly ? 'Войти в аккаунт' : '💾 Сохранить и синхронизировать'
+            toast(e.message, 'err')
+          })
+        }
+      }, isLoginOnly ? 'Войти в аккаунт' : '💾 Сохранить и синхронизировать')
+
+      wrap.appendChild(btnSubmit)
+
+    } else {
+      // Telegram Tab
+      wrap.appendChild(el('div',{style:'text-align:center;padding:10px 0'},[
+        el('div',{style:'font-size:40px;margin-bottom:12px'},'✈️'),
+        el('p',{style:'color:var(--text2);font-size:14px;line-height:1.6;margin-bottom:20px'},
+          'Нажмите кнопку ниже, чтобы открыть бота @FinanceTiinServiceBot. Авторизация в браузере произойдет автоматически за 1 секунду.'
+        ),
+        el('button',{
+          id:'btn-tg-start',
+          className:'primary',
+          style:'width:100%;padding:13px;font-size:15px;font-weight:700;margin-bottom:14px',
+          onclick:function(){
+            var btn = document.getElementById('btn-tg-start')
+            btn.disabled = true
+            btn.textContent = 'Генерация ссылки...'
+            api('api/auth/telegram/request-link',{method:'POST'}).then(function(d){
+              btn.textContent = 'Ожидание подтверждения в боте...'
+              window.open(d.bot_url, '_blank')
+              
+              if(tgPollInterval) clearInterval(tgPollInterval)
+              tgPollInterval = setInterval(function(){
+                api('api/auth/telegram/check-status?code='+d.code).then(function(statusRes){
+                  if(statusRes && statusRes.status === 'approved' && statusRes.token){
+                    clearInterval(tgPollInterval)
+                    token = statusRes.token
+                    localStorage.setItem('token', token)
+                    localStorage.setItem('tiin_welcome_seen', '1')
+                    isLocalMode = false
+                    user = statusRes.user
+                    curInst = statusRes.instance
+                    mclose()
+                    toast('Успешный вход через Telegram!', 'ok')
+                    loadCategories().then(function(){ return loadInsts() }).then(function(){ renderApp() })
+                  }
+                }).catch(function(){})
+              }, 2000)
+            }).catch(function(e){
+              btn.disabled = false
+              btn.textContent = 'Открыть Telegram бота'
+              toast(e.message, 'err')
+            })
+          }
+        },'Открыть Telegram бота')
+      ]))
+    }
+  }
+
+  renderModalBody()
+  modal(isLoginOnly ? '🔑 Вход в аккаунт' : '☁️ Сохранение в облако', wrap, {centered:true, style:'max-width:440px'})
+}
 
 function showAuthModal(isReg){
-  mclose()
-  var wrap=el('div',{})
-  
-  var build=function(){
-    wrap.innerHTML=''
-    wrap.appendChild(el('div',{className:'sub',style:'text-align:center;margin-bottom:24px'},isReg?'Создайте аккаунт':'Войдите в аккаунт'))
-    wrap.appendChild(el('div',{className:'form-group'},[el('label',{},'Логин'),el('input',{id:'au',type:'text',placeholder:'Логин',onkeydown:function(e){if(e.key==='Enter') isReg?doReg():doLogin()}})]))
-    wrap.appendChild(el('div',{className:'form-group'},[el('label',{},'Пароль'),el('input',{id:'ap',type:'password',placeholder:isReg?'Мин. 6 символов':'Пароль',onkeydown:function(e){if(e.key==='Enter') isReg?doReg():doLogin()}})]))
-    wrap.appendChild(el('button',{className:'primary',style:'width:100%;margin-top:8px;padding:12px;font-size:16px',onclick:isReg?doReg:doLogin},isReg?'Зарегистрироваться':'Войти'))
-    wrap.appendChild(el('button',{className:'ghost',style:'width:100%;margin-top:8px;padding:10px;font-size:14px;border:1px dashed var(--accent)',onclick:showDemoModal},'🎮 Войти как гость (Без регистрации)'))
-    wrap.appendChild(el('div',{className:'sw',style:'text-align:center;margin-top:16px'},[
-      isReg?'Есть аккаунт? ':'Нет аккаунта? ',
-      el('a',{href:'#',onclick:function(e){e.preventDefault();showAuthModal(!isReg)}},isReg?'Войти':'Регистрация'),
-      !isReg ? el('div',{style:'margin-top:10px'},[
-        el('a',{href:'#',style:'font-size:13px;color:var(--text3)',onclick:function(e){e.preventDefault();showForgotPasswordModal()}},'🔑 Забыли пароль?')
-      ]) : null
-    ]))
-    wrap.appendChild(el('div',{className:'err auth-err',id:'ae'}))
+  showSaveToServerModal(!isReg)
+}
+
+function resetLocalSession(showWelcome){
+  if(showWelcome === undefined) showWelcome = true
+  localStorage.removeItem('tiin_local_txs')
+  localStorage.removeItem('tiin_local_cats')
+  localStorage.removeItem('tiin_local_savings')
+  localStorage.removeItem('tiin_local_inst_id')
+  if(showWelcome){
+    localStorage.removeItem('tiin_welcome_seen')
   }
-  
-  build()
-  modal(isReg?'💰 Регистрация':'💰 Вход', wrap, {centered:true, style:'width:100%;max-width:400px'})
+  localInstanceId = 'INST-' + Math.random().toString(36).substring(2, 8).toUpperCase()
+  localStorage.setItem('tiin_local_inst_id', localInstanceId)
+  token = null
+  user = null
+  instances = []
+  curInst = null
+  localStorage.removeItem('token')
+  initLocalInstance()
 }
 
-function showForgotPasswordModal(){
+function showLogoutModal(){
   mclose()
-  var wrap = el('div',{},[
-    el('p',{style:'margin-bottom:16px;font-size:14px;color:var(--text2)'},'Укажите Ваш логин и контакт в Telegram/Email. Код восстановления будет отправлен разработчику для безопасности.'),
-    el('div',{className:'form-group',style:'margin-bottom:12px'},[
-      el('label',{},'Ваш логин:'),
-      el('input',{id:'fg-username',type:'text',placeholder:'Логин'})
-    ]),
-    el('div',{className:'form-group',style:'margin-bottom:16px'},[
-      el('label',{},'Ваш Telegram или Email:'),
-      el('input',{id:'fg-contact',type:'text',placeholder:'@username или email'})
-    ]),
-    el('button',{
-      className:'primary',
-      style:'width:100%;padding:12px;font-size:15px',
-      onclick:function(){
-        var u = document.getElementById('fg-username').value
-        var c = document.getElementById('fg-contact').value
-        if(!u || !c) return toast('Заполните все поля','err')
-        api('api/auth/forgot-password',{
-          method:'POST',
-          body:JSON.stringify({username:u, contact:c})
-        }).then(function(d){
-          toast(d.message, 'ok')
-          showResetPasswordModal(u)
-        }).catch(function(e){
-          toast(e.message, 'err')
-        })
-      }
-    },'📩 Отправить запрос на сброс'),
-    el('div',{className:'sw',style:'text-align:center;margin-top:16px'},[
-      el('a',{href:'#',onclick:function(e){e.preventDefault();showAuthModal(false)}},'Вернуться к входу')
+  var wrap = el('div', {style: 'text-align:center;padding:12px 6px;'})
+
+  if(isLocalMode){
+    // Guest / Local Mode
+    var txCount = getLocalTxs().length
+    wrap.appendChild(el('div', {style: 'font-size:44px;margin-bottom:12px'}, '📁'))
+    wrap.appendChild(el('h3', {style: 'font-size:19px;font-weight:800;margin-bottom:8px;color:var(--text)'}, 'Гостевой режим (' + localInstanceId + ')'))
+    wrap.appendChild(el('p', {style: 'font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:20px;max-width:360px;margin-left:auto;margin-right:auto'},
+      'Сейчас ваши данные (' + txCount + ' операций) сохраняются только в памяти этого браузера. Выберите необходимое действие:'
+    ))
+
+    var btnList = el('div', {style: 'display:flex;flex-direction:column;gap:10px;text-align:left;'}, [
+      el('button', {
+        className: 'primary',
+        style: 'width:100%;padding:13px 16px;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:space-between;',
+        onclick: function(){
+          mclose()
+          showSaveToServerModal(true)
+        }
+      }, [
+        el('span', {}, '🔑 Войти в существующий аккаунт'),
+        el('span', {style: 'font-size:11px;opacity:0.85'}, 'Email / TG →')
+      ]),
+
+      el('button', {
+        className: 'ghost',
+        style: 'width:100%;padding:13px 16px;font-size:14px;font-weight:600;border:1px solid var(--accent);color:var(--accent2);display:flex;align-items:center;justify-content:space-between;',
+        onclick: function(){
+          mclose()
+          showSaveToServerModal(false)
+        }
+      }, [
+        el('span', {}, '☁️ Сохранить этот бюджет в облако'),
+        el('span', {style: 'font-size:11px;opacity:0.85'}, 'Синхронизация →')
+      ]),
+
+      el('button', {
+        className: 'ghost',
+        style: 'width:100%;padding:13px 16px;font-size:14px;color:var(--red2);border:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;',
+        onclick: function(){
+          if(confirm('Внимание! Все локальные данные (' + txCount + ' операций) в этом браузере будут удалены и создан новый чистый бюджет. Продолжить?')){
+            mclose()
+            resetLocalSession(true)
+            toast('Локальные данные очищены. Создан новый бюджет!', 'ok')
+          }
+        }
+      }, [
+        el('span', {}, '🔄 Начать с чистого листа'),
+        el('span', {style: 'font-size:11px;opacity:0.85'}, 'Очистить данные')
+      ]),
+
+      el('button', {
+        className: 'ghost sm',
+        style: 'width:100%;color:var(--text3);margin-top:6px;padding:8px;',
+        onclick: function(){ mclose() }
+      }, 'Отмена')
     ])
-  ])
-  modal('🔑 Восстановление пароля', wrap, {centered:true, style:'max-width:420px'})
+
+    wrap.appendChild(btnList)
+    modal('Управление сессией', wrap, {centered: true, style: 'max-width:440px'})
+
+  } else {
+    // Authenticated Mode (server token)
+    wrap.appendChild(el('div', {style: 'font-size:44px;margin-bottom:12px'}, '👤'))
+    wrap.appendChild(el('h3', {style: 'font-size:19px;font-weight:800;margin-bottom:6px;color:var(--text)'}, (user ? user.username : 'Ваш аккаунт')))
+    if(user && user.email){
+      wrap.appendChild(el('div', {style: 'font-size:13px;color:var(--accent2);margin-bottom:14px;font-weight:600'}, user.email))
+    }
+    wrap.appendChild(el('p', {style: 'font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:20px;max-width:360px;margin-left:auto;margin-right:auto'},
+      'Вы авторизованы на сервере TIIN Finance. Все данные надежно сохранены в облаке.'
+    ))
+
+    var btnList = el('div', {style: 'display:flex;flex-direction:column;gap:10px;text-align:left;'}, [
+      el('button', {
+        className: 'primary',
+        style: 'width:100%;padding:13px 16px;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:space-between;',
+        onclick: function(){
+          mclose()
+          token = null
+          user = null
+          localStorage.removeItem('token')
+          toast('Вы вышли из учетной записи', 'ok')
+          resetLocalSession(true)
+        }
+      }, [
+        el('span', {}, '🚪 Выйти из аккаунта'),
+        el('span', {style: 'font-size:11px;opacity:0.85'}, 'В стартовое меню →')
+      ]),
+
+      el('button', {
+        className: 'ghost sm',
+        style: 'width:100%;color:var(--text3);margin-top:6px;padding:8px;',
+        onclick: function(){ mclose() }
+      }, 'Отмена')
+    ])
+
+    wrap.appendChild(btnList)
+    modal('Выход из аккаунта', wrap, {centered: true, style: 'max-width:440px'})
+  }
 }
 
-function showResetPasswordModal(prefillUsername){
-  mclose()
-  var wrap = el('div',{},[
-    el('p',{style:'margin-bottom:16px;font-size:14px;color:var(--text2)'},'Введите полученный 6-значный код восстановления и новый пароль.'),
-    el('div',{className:'form-group',style:'margin-bottom:12px'},[
-      el('label',{},'Ваш логин:'),
-      el('input',{id:'rs-username',type:'text',value:prefillUsername||'',placeholder:'Логин'})
-    ]),
-    el('div',{className:'form-group',style:'margin-bottom:12px'},[
-      el('label',{},'6-значный код восстановления:'),
-      el('input',{id:'rs-code',type:'text',placeholder:'Код (например, 123456)'})
-    ]),
-    el('div',{className:'form-group',style:'margin-bottom:16px'},[
-      el('label',{},'Новый пароль:'),
-      el('input',{id:'rs-password',type:'password',placeholder:'Минимум 6 символов'})
-    ]),
-    el('button',{
-      className:'primary',
-      style:'width:100%;padding:12px;font-size:15px',
-      onclick:function(){
-        var u = document.getElementById('rs-username').value
-        var c = document.getElementById('rs-code').value
-        var p = document.getElementById('rs-password').value
-        if(!u || !c || !p) return toast('Заполните все поля','err')
-        api('api/auth/reset-password',{
-          method:'POST',
-          body:JSON.stringify({username:u, code:c, new_password:p})
-        }).then(function(d){
-          toast(d.message, 'ok')
-          showAuthModal(false)
-        }).catch(function(e){
-          toast(e.message, 'err')
-        })
-      }
-    },'✨ Изменить пароль и войти')
-  ])
-  modal('🔑 Ввод кода и нового пароля', wrap, {centered:true, style:'max-width:420px'})
-}
-
-
-function doLogin(){
-  var username=document.getElementById('au').value
-  var password=document.getElementById('ap').value
-  document.getElementById('ae').textContent=''
-  api('api/auth/login',{method:'POST',body:JSON.stringify({username:username,password:password})})
-    .then(function(d){token=d.token;user=d.user;localStorage.setItem('token',token);trackAction('login','user',user.id);return loadCategories()})
-    .then(function(){return loadInsts()})
-    .then(function(){mclose();if(instances.length){curInst=instances[0];renderApp()}else{renderInstanceGate()}})
-    .catch(function(e){document.getElementById('ae').textContent=e.message})
-}
-
-function doReg(){
-  var username=document.getElementById('au').value
-  var password=document.getElementById('ap').value
-  document.getElementById('ae').textContent=''
-  api('api/auth/register',{method:'POST',body:JSON.stringify({username:username,password:password})})
-    .then(function(d){token=d.token;user=d.user;localStorage.setItem('token',token);trackAction('register','user',user.id);return loadCategories()})
-    .then(function(){return loadInsts()})
-    .then(function(){mclose();if(instances.length){curInst=instances[0];renderApp()}else{renderInstanceGate()}})
-    .catch(function(e){document.getElementById('ae').textContent=e.message})
+function logout(){
+  showLogoutModal()
 }
 
 function performLogout(){
-  if(user && user.is_demo){
-    api('api/demo/logout',{method:'POST'}).catch(function(){})
-  }
-  clearDemoTimer()
-  mclose()
-  token=null;user=null;instances=[];curInst=null
-  localStorage.removeItem('token')
-  sessionStorage.removeItem('prefill')
-  renderLanding()
+  showLogoutModal()
 }
 
-function logout(skipConfirm){
-  if(!skipConfirm && user && user.is_demo && curInst){
-    modal('🚪 Выход из демо-режима', el('div',{},[
-      el('p',{style:'margin-bottom:12px;line-height:1.5'},'Вы собираетесь выйти из гостевого аккаунта. Все внесенные изменения будут очищены.'),
-      el('p',{style:'margin-bottom:16px;font-size:13px;color:var(--accent2);line-height:1.5;background:var(--accent-bg);padding:10px 12px;border-radius:var(--rs)'},[
-        '💡 ',
-        el('strong',{},'Хотите сохранить данные?'),
-        ' Скачайте Excel-файл со своими транзакциями, чтобы позже легко загрузить их в свой постоянный аккаунт.'
-      ]),
-      el('div',{style:'display:flex;flex-direction:column;gap:8px'},[
-        el('button',{
-          className:'primary',
-          style:'padding:10px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:6px',
-          onclick:function(){ downloadDemoXlsx() }
-        },'📊 Скачать данные в XLSX'),
-        el('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:4px'},[
-          el('button',{className:'ghost sm',onclick:mclose},'Отмена'),
-          el('button',{className:'danger sm',onclick:function(){ performLogout() }},'Всё равно выйти')
-        ])
-      ])
-    ]), {centered:true, style:'max-width:440px'})
-    return
-  }
-  performLogout()
-}
 
-// ==================== DEMO MODE JS LOGIC ====================
-var demoTimerInterval = null;
-var demoWarningShown = false;
-var demoEndTime = null;
 
-function clearDemoTimer(){
-  if(demoTimerInterval){clearInterval(demoTimerInterval);demoTimerInterval=null}
-  demoWarningShown = false
-  demoEndTime = null
-}
 
-function tickDemoTimer(){
-  if(!demoEndTime) return
-  var sec = Math.max(0, Math.ceil((demoEndTime - Date.now()) / 1000))
-  if(sec <= 0){
-    clearDemoTimer()
-    showDemoExpiredModal()
-    return
-  }
-  
-  if(sec <= 120 && !demoWarningShown){
-    demoWarningShown = true
-    showDemoExpiryWarning()
-  }
 
-  updateDemoTimerBadge(sec)
-}
-
-function startDemoTimer(secondsRemaining){
-  clearDemoTimer()
-  demoEndTime = Date.now() + (secondsRemaining * 1000)
-  
-  demoTimerInterval = setInterval(tickDemoTimer, 1000)
-  tickDemoTimer()
-}
-
-document.addEventListener('visibilitychange', function(){
-  if(!document.hidden && demoEndTime){
-    tickDemoTimer()
-  }
-})
-
-function updateDemoTimerBadge(sec){
-  var elTimer = document.getElementById('demo-timer-val')
-  if(elTimer){
-    var m = Math.floor(sec / 60)
-    var s = sec % 60
-    elTimer.textContent = (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s
-  }
-}
-
-function downloadDemoXlsx(){
-  if(!curInst) return toast('Инстанс не выбран', 'err')
-  toast('Генерация Excel файла...', 'ok')
-  fetch(API + 'api/instances/' + curInst.id + '/export-xlsx', {
-    headers: { 'Authorization': 'Bearer ' + token }
-  })
-  .then(function(res){
-    if(!res.ok) throw new Error('Ошибка экспорта: HTTP ' + res.status)
-    return res.arrayBuffer()
-  })
-  .then(function(ab){
-    var blob = new Blob([ab], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
-    var url = window.URL.createObjectURL(blob)
-    var a = document.createElement('a')
-    a.href = url
-    a.download = 'finance_' + (curInst.name || 'export').replace(/\s+/g, '_') + '.xlsx'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(function(){ window.URL.revokeObjectURL(url) }, 1000)
-    toast('Файл выписки успешно скачан!', 'ok')
-  })
-  .catch(function(err){
-    toast('Ошибка скачивания: ' + err.message, 'err')
-  })
-}
-
-function showDemoExpiryWarning(){
-  modal('⚠️ Истекает гостевая сессия', el('div',{},[
-    el('p',{style:'margin-bottom:12px;line-height:1.5'},'Ваша 20-минутная демо-сессия закончится через 2 минуты. Все внесенные изменения будут очищены для следующего гостя.'),
-    el('p',{style:'margin-bottom:16px;font-size:13px;color:var(--accent2);line-height:1.5;background:var(--accent-bg);padding:10px 12px;border-radius:var(--rs)'},[
-      '💡 ',
-      el('strong',{},'Ввели свои данные?'),
-      ' Сохраните их в Excel-файл, чтобы не потерять и легко импортировать в свой постоянный аккаунт после регистрации!'
-    ]),
-    el('div',{style:'display:flex;flex-direction:column;gap:8px'},[
-      el('button',{
-        className:'primary',
-        style:'padding:10px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:6px',
-        onclick:function(){ downloadDemoXlsx() }
-      },'📊 Выгрузить данные в XLSX'),
-      el('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:4px'},[
-        el('button',{className:'ghost sm',onclick:mclose},'Продолжить'),
-        el('button',{className:'danger sm',onclick:function(){mclose();logout()}},'Завершить сейчас')
-      ])
-    ])
-  ]), {centered:true, style:'max-width:440px'})
-}
-
-function showDemoExpiredModal(){
-  modal('⏳ Сессия гостевого аккаунта завершена', el('div',{},[
-    el('p',{style:'margin-bottom:12px;line-height:1.5'},'Время работы демо-режима истекло. Перед переходом вы можете выгрузить созданные операции.'),
-    el('div',{style:'display:flex;flex-direction:column;gap:8px'},[
-      el('button',{
-        className:'primary',
-        style:'padding:10px;font-size:13px',
-        onclick:function(){ downloadDemoXlsx() }
-      },'📊 Выгрузить в XLSX перед выходом'),
-      el('button',{
-        className:'ghost',
-        style:'padding:8px;font-size:13px',
-        onclick:function(){ mclose(); logout() }
-      },'Закрыть и выйти')
-    ])
-  ]), {centered:true, style:'max-width:420px'})
-}
-
-function showDemoModal(){
-  mclose()
-  var wrap = el('div',{})
-  var loadSlots = function(){
-    wrap.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Загрузка слотов...</div>'
-    api('api/demo/slots')
-      .then(function(d){
-        wrap.innerHTML = ''
-        wrap.appendChild(el('div',{className:'sub',style:'text-align:center;margin-bottom:16px'},'Доступно 5 гостевых аккаунтов. Сессия длится 20 минут.'))
-        
-        var grid = el('div',{style:'display:flex;flex-direction:column;gap:10px;margin-bottom:20px'})
-        var slots = d.slots || []
-        
-        for(var i=0; i<slots.length; i++){
-          (function(s){
-            var isFree = s.status === 'free'
-            var mins = Math.ceil(s.seconds_remaining / 60)
-            var statusText = isFree ? '🟢 Свободен' : ('🔴 Занят (освободится ~через ' + mins + ' мин)')
-            
-            var card = el('div',{
-              style:'background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;' + (isFree?'cursor:pointer;':'opacity:0.7;'),
-              onclick: isFree ? function(){ doDemoLogin(s.slot) } : null
-            },[
-              el('div',{},[
-                el('div',{style:'font-weight:600;font-size:14px'},'Гость #' + s.slot),
-                el('div',{style:'font-size:12px;color:'+(isFree?'var(--green2)':'var(--red2)')}, statusText)
-              ]),
-              isFree ? el('button',{className:'primary sm'},'Войти') : el('span',{style:'font-size:12px;color:var(--text3)'},'Занят')
-            ])
-            grid.appendChild(card)
-          })(slots[i])
-        }
-        
-        wrap.appendChild(grid)
-        wrap.appendChild(el('button',{
-          className:'primary',
-          style:'width:100%;padding:12px;font-size:15px',
-          onclick: function(){ doDemoLogin(null) }
-        },'⚡ Войти в любой свободный слот'))
-      })
-      .catch(function(e){
-        wrap.innerHTML = '<div class="err" style="text-align:center">' + e.message + '</div>'
-      })
-  }
-
-  loadSlots()
-  modal('🎮 Гостевой демо-вход', wrap, {centered:true, style:'width:100%;max-width:440px'})
-}
-
-function doDemoLogin(slotNum){
-  mclose()
-  toast('Вход в демо-режим...','ok')
-  api('api/demo/login',{method:'POST',body:JSON.stringify({slot:slotNum})})
-    .then(function(d){
-      token = d.token
-      user = d.user
-      user.is_demo = true
-      user.demo = {
-        slot: d.user.demo_slot || slotNum,
-        seconds_remaining: d.seconds_remaining,
-        receipt_scans_left: d.receipt_scans_left
-      }
-      localStorage.setItem('token', token)
-      startDemoTimer(d.seconds_remaining)
-      return loadInsts()
-    })
-    .then(function(){
-      if(instances.length){
-        curInst = instances[0]
-        return loadCategories().then(function(){
-          renderApp()
-          toast('Вы вошли как Гость #' + (user.demo?user.demo.slot:'') + '! Данные подготовлены.','ok')
-        })
-      } else {
-        renderInstanceGate()
-      }
-    })
-    .catch(function(e){
-      toast(e.message, 'err')
-    })
-
-}
-
-function triggerDemoSeed(){
-  if(!curInst) return
-  toast('Генерация живых данных...','ok')
-  api('api/demo/seed',{method:'POST',body:JSON.stringify({instance_id:curInst.id})})
-    .then(function(d){
-      toast(d.message,'ok')
-      return loadCategories()
-    })
-    .then(function(){
-      nav(curPage)
-    })
-    .catch(function(e){ toast(e.message,'err') })
-}
-
-function triggerDemoClear(){
-  if(!curInst) return
-  if(!confirm('Очистить все транзакции, счета, категории и кредиты текущего инстанса?')) return
-  api('api/demo/clear',{method:'POST',body:JSON.stringify({instance_id:curInst.id})})
-    .then(function(d){
-      toast(d.message,'ok')
-      return loadCategories()
-    })
-    .then(function(){
-      nav(curPage)
-    })
-    .catch(function(e){ toast(e.message,'err') })
-}
-
+function showForgotPasswordModal(){}
+function showResetPasswordModal(){}
+function doLogin(){}
+function doReg(){}
+function clearDemoTimer(){}
+function startDemoTimer(){}
+function updateDemoTimerBadge(){}
+function showDemoExpiredModal(){}
+function showDemoModal(){ showSaveToServerModal(false) }
+function doDemoLogin(){}
+function triggerDemoSeed(){}
+function triggerDemoClear(){}
 
 // ==================== INSTANCE GATE ====================
 function renderInstanceGate(){
@@ -1346,8 +1402,7 @@ function renderApp(){
   m.appendChild(el('div',{id:'pg-dashboard',className:'page active'}))
   m.appendChild(el('div',{id:'pg-transactions',className:'page'}))
   m.appendChild(el('div',{id:'pg-savings',className:'page'}))
-  m.appendChild(el('div',{id:'pg-credits',className:'page'}))
-  m.appendChild(el('div',{id:'pg-instances',className:'page'}))
+    m.appendChild(el('div',{id:'pg-instances',className:'page'}))
   m.appendChild(el('div',{id:'pg-settings',className:'page'}))
   a.appendChild(m)
   renderMobileHeader()
@@ -1377,7 +1432,11 @@ function renderApp(){
 }
 
 function createLogoutBtn(onclickHandler){
-  var btn = el('div',{className:'user-logout',onclick:onclickHandler,title:'Выйти'})
+  var btn = el('div',{
+    className:'user-logout',
+    onclick:onclickHandler,
+    title: isLocalMode ? 'Сменить сессию / Выйти' : 'Выйти из аккаунта'
+  })
   btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>'
   return btn
 }
@@ -1424,8 +1483,6 @@ function renderMobileDrawer(){
   var navItems=[
     {id:'dashboard',icon:'📊',label:'Дашборд'},
     {id:'transactions',icon:'💳',label:'Транзакции'},
-    {id:'savings',icon:'🏦',label:'Накопления'},
-    {id:'credits',icon:'💳',label:'Кредиты'},
     {id:'instances',icon:'👥',label:'Инстансы'}
   ]
   for(var n=0;n<navItems.length;n++){
@@ -1436,15 +1493,16 @@ function renderMobileDrawer(){
       el('span',{},ni.label)
     ]))
   }
-  if(user && user.is_demo){
-    var demoBoxMob = el('div',{style:'margin:12px 0;padding:12px;background:var(--accent-bg);border:1px solid var(--accent);border-radius:var(--rs)'},[
-      el('button',{className:'primary sm',style:'width:100%;margin-bottom:6px',onclick:function(){closeMobileDrawer();triggerDemoSeed()}},'✨ Сгенерировать данные'),
-      el('button',{className:'danger sm',style:'width:100%',onclick:function(){closeMobileDrawer();triggerDemoClear()}},'🗑️ Очистить данные')
+  if(isLocalMode){
+    var demoBoxMob = el('div',{style:'margin:12px 0;padding:12px;background:linear-gradient(135deg,rgba(99,102,241,0.15),rgba(168,85,247,0.15));border:1px solid rgba(99,102,241,0.35);border-radius:var(--rs);text-align:center'},[
+      el('div',{style:'font-size:11px;font-weight:700;color:#a5b4fc;text-transform:uppercase;margin-bottom:4px'},'💾 Локальный режим'),
+      el('div',{style:'font-size:12px;color:var(--text2);margin-bottom:8px'},'Данные в этом браузере'),
+      el('button',{className:'primary sm',style:'width:100%;font-size:12px;font-weight:700',onclick:function(){closeMobileDrawer();showSaveToServerModal(false)}},'☁️ Сохранить на сервер')
     ])
     drawer.appendChild(demoBoxMob)
   }
   var avatarLetter=user&&user.username?user.username.charAt(0).toUpperCase():'?'
-  var planBadgeTextMob = (user && user.plan_info && user.plan_info.badge) ? user.plan_info.badge : (user && user.is_demo ? '🎮 Demo' : '🆓 Free')
+  var planBadgeTextMob = (user && user.plan_info && user.plan_info.badge) ? user.plan_info.badge : (isLocalMode ? '📁 Локальный' : '🆓 Free')
   drawer.appendChild(el('div',{className:'user-info'},[
     el('div',{className:'avatar'},avatarLetter),
     el('div',{className:'name',style:'display:flex;flex-direction:column;gap:2px'},[
@@ -1513,8 +1571,6 @@ function renderSidebar(){
   var navItems=[
     {id:'dashboard',icon:'📊',label:'Дашборд'},
     {id:'transactions',icon:'💳',label:'Транзакции'},
-    {id:'savings',icon:'🏦',label:'Накопления'},
-    {id:'credits',icon:'💳',label:'Кредиты'},
     {id:'instances',icon:'👥',label:'Инстансы'}
   ]
   for(var n=0;n<navItems.length;n++){
@@ -1526,22 +1582,13 @@ function renderSidebar(){
     ]))
   }
 
-  if(user && user.is_demo){
-    var secRem = (user.demo && user.demo.seconds_remaining) ? user.demo.seconds_remaining : 1200
-    var m = Math.floor(secRem / 60)
-    var secStr = secRem % 60
-    var timerStr = (m < 10 ? '0' : '') + m + ':' + (secStr < 10 ? '0' : '') + secStr
-
-
-    var demoBox = el('div',{style:'margin-top:16px;padding:12px;background:var(--accent-bg);border:1px solid var(--accent);border-radius:var(--rs)'},[
-      el('div',{style:'font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between'},[
-        el('span',{},'🎮 Демо-режим'),
-        el('span',{id:'demo-timer-val',style:'font-family:monospace;font-size:12px'},timerStr)
-      ]),
-      el('button',{className:'primary sm',style:'width:100%;margin-bottom:6px;font-size:12px',onclick:triggerDemoSeed},'✨ Сгенерировать данные'),
-      el('button',{className:'danger sm',style:'width:100%;font-size:12px',onclick:triggerDemoClear},'🗑️ Очистить все данные')
+  if(isLocalMode){
+    var saveBoxSide = el('div',{style:'margin-top:14px;padding:12px;background:linear-gradient(135deg,rgba(99,102,241,0.15),rgba(168,85,247,0.15));border:1px solid rgba(99,102,241,0.35);border-radius:var(--rs);text-align:center'},[
+      el('div',{style:'font-size:11px;font-weight:700;color:#a5b4fc;text-transform:uppercase;margin-bottom:4px'},'💾 Локальный режим'),
+      el('div',{style:'font-size:12px;color:var(--text2);margin-bottom:8px;line-height:1.3'},'Данные в этом браузере'),
+      el('button',{className:'primary sm',style:'width:100%;font-size:12px;font-weight:700',onclick:function(){showSaveToServerModal(false)}},'☁️ Сохранить на сервер')
     ])
-    s.appendChild(demoBox)
+    s.appendChild(saveBoxSide)
   }
 
   var isLinked = curInst && (curInst.is_telegram_linked === true || curInst.is_telegram_linked === 'true')
@@ -1557,7 +1604,7 @@ function renderSidebar(){
 
 
   var avatarLetter=user&&user.username?user.username.charAt(0).toUpperCase():'?'
-  var planBadgeText = (user && user.plan_info && user.plan_info.badge) ? user.plan_info.badge : (user && user.is_demo ? '🎮 Demo' : '🆓 Free')
+  var planBadgeText = (user && user.plan_info && user.plan_info.badge) ? user.plan_info.badge : (isLocalMode ? '📁 Локальный' : '🆓 Free')
   s.appendChild(el('div',{className:'user-info'},[
     el('div',{className:'avatar'},avatarLetter),
     el('div',{className:'name',style:'display:flex;flex-direction:column;gap:2px'},[
@@ -1571,7 +1618,7 @@ function renderSidebar(){
 }
 
 
-var pageTitles={dashboard:'Дашборд',transactions:'Транзакции',accounts:'Счета',savings:'Накопления',credits:'Кредиты',instances:'Инстансы'}
+var pageTitles={dashboard:'Дашборд',transactions:'Транзакции',accounts:'Счета',instances:'Инстансы'}
 function nav(p){
   curPage=p
   var items=document.querySelectorAll('.nav-item')
@@ -1595,8 +1642,6 @@ function nav(p){
   if(p==='dashboard')loadDash()
   else if(p==='transactions')loadTx()
   else if(p==='accounts')loadAccounts()
-  else if(p==='savings')loadSavings()
-  else if(p==='credits')loadCredits()
   else if(p==='instances')loadInstPage()
 }
 
@@ -1659,6 +1704,14 @@ function loadInstPage(){
       el('div',{className:'form-group'},[el('label',{},'ID инстанса'),el('input',{id:'join-id',type:'number'})]),
       el('div',{className:'form-actions'},el('button',{className:'primary',onclick:doJoin},'Отправить заявку'))
     ])
+  ]))
+
+  p.appendChild(el('div',{className:'card',style:'margin-top:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px'},[
+    el('div',{},[
+      el('div',{style:'font-weight:700;font-size:15px;margin-bottom:4px'}, isLocalMode ? '📁 Гостевая сессия (' + localInstanceId + ')' : '👤 Аккаунт: ' + (user ? user.username : '')),
+      el('div',{style:'font-size:12px;color:var(--text2)'}, isLocalMode ? 'Данные хранятся локально в этом браузере' : (user && user.email ? user.email : 'Облачная синхронизация активна'))
+    ]),
+    el('button',{className:'ghost sm',style:'border:1px solid var(--border);color:var(--red2);font-weight:600;padding:8px 16px',onclick:showLogoutModal}, isLocalMode ? '🚪 Сменить сессию / Выйти' : '🚪 Выйти из аккаунта')
   ]))
 }
 
@@ -2772,433 +2825,8 @@ function deleteAccount(id){
   })
 }
 
-function loadCredits(){
-  var p=document.getElementById('pg-credits')
-  if(!curInst){p.innerHTML='';p.appendChild(el('div',{className:'empty'},[el('div',{className:'ic'},'📦'),el('p',{},'Выберите инстанс')]));return}
-  p.innerHTML=''
-  p.appendChild(el('div',{className:'page-header'},[
-    el('div',{},[el('h1',{},'💳 Кредиты'),el('div',{className:'subtitle'},'Управление кредитами и платежами')]),
-    el('button',{className:'primary',onclick:function(){showCreditForm(null)}},'+ Добавить кредит')
-  ]))
-
-  var tabWrap=el('div',{style:'display:flex;gap:8px;margin-bottom:16px'})
-  var tabs=[{id:'credits',label:'Активные кредиты'},{id:'history',label:'История платежей'}]
-  for(var t=0;t<tabs.length;t++){
-    var tb=tabs[t]
-    tabWrap.appendChild(el('button',{className:'sm '+(creditsTab===tb.id?'primary':'ghost'),onclick:(function(id){return function(){creditsTab=id;loadCreditsData();renderTabs()}})(tb.id)},tb.label))
-  }
-  p.appendChild(tabWrap)
-
-  p.appendChild(el('div',{id:'credits-content'}))
-  
-  function renderTabs() {
-    tabWrap.innerHTML=''
-    for(var t=0;t<tabs.length;t++){
-      var tb=tabs[t]
-      tabWrap.appendChild(el('button',{className:'sm '+(creditsTab===tb.id?'primary':'ghost'),onclick:(function(id){return function(){creditsTab=id;loadCreditsData();renderTabs()}})(tb.id)},tb.label))
-    }
-  }
-  loadCreditsData()
-}
-
-var creditsTab='credits'
-
-function loadCreditsData(){
-  if(!curInst)return
-  if(creditsTab==='credits')loadCreditsList()
-  else loadCreditsHistory()
-}
-
-function loadCreditsList(){
-  var cont=document.getElementById('credits-content')
-  if(!cont)return
-  cont.innerHTML=''
-  api('api/instances/'+curInst.id+'/credits')
-    .then(function(credits){
-      if(!credits.length){
-        cont.appendChild(el('div',{className:'empty'},[
-          el('div',{className:'ic'},'🏦'),
-          el('p',{},'Нет кредитов. Добавьте первый!')
-        ]))
-        return
-      }
-      for(var i=0;i<credits.length;i++){
-        cont.appendChild(buildCreditCard(credits[i]))
-      }
-    })
-    .catch(function(e){cont.innerHTML='<div class="empty"><p>Ошибка: '+e.message+'</p></div>'})
-}
-
-function buildCreditCard(cr){
-  var total=parseFloat(cr.total_amount)||0
-  var paid=parseFloat(cr.total_paid)||0
-  var remaining=parseFloat(cr.remaining_amount!=null?cr.remaining_amount:total)
-  var pct=total>0?Math.min(Math.round((paid/total)*100),100):0
-  var isPaidOff=remaining<=0
-  var principal=parseFloat(cr.total_principal)||0
-  var interest=parseFloat(cr.total_interest)||0
-
-  var card=el('div',{className:'card',style:'margin-bottom:12px'})
-  var header=el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px'},[
-    el('div',{},[
-      el('div',{style:'font-size:15px;font-weight:600'},cr.name),
-      el('div',{style:'font-size:12px;color:var(--text3);margin-top:2px'},cr.lender||'—')
-    ]),
-    el('div',{style:'display:flex;gap:4px;flex-shrink:0'},[
-      el('button',{className:'sm ghost',onclick:(function(c){return function(){showCreditForm(c)}})(cr)},'✏️'),
-      el('button',{className:'sm success',onclick:(function(c){return function(){showPaymentForm(c)}})(cr)},'💸'),
-      el('button',{className:'sm danger',onclick:(function(id){return function(){deleteCredit(id)}})(cr.id)},'✕')
-    ])
-  ])
-
-  var progressColor=isPaidOff?'var(--green)':'var(--accent)'
-  var progress=el('div',{style:'margin-bottom:12px'},[
-    el('div',{style:'display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px'},[
-      el('span',{style:'color:var(--text3)'},'Выплачено: '+fmt(paid)+' ₽ из '+fmt(total)+' ₽'),
-      el('span',{style:'font-weight:600;color:'+progressColor},isPaidOff?'✅ Погашено':pct+'%')
-    ]),
-    el('div',{style:'height:6px;background:var(--border);border-radius:3px;overflow:hidden'},[
-      el('div',{style:'height:100%;width:'+pct+'%;background:'+progressColor+';border-radius:3px;transition:width .3s'})
-    ])
-  ])
-
-  var nextPayment=null
-  var mPayment=parseFloat(cr.monthly_payment)||0
-  if(mPayment>0&&remaining>0&&!isPaidOff){
-    var today=new Date()
-    var paymentDay = parseInt(cr.payment_day) || 15
-    var nextDate = new Date(today.getFullYear(), today.getMonth(), paymentDay)
-    if (nextDate < today && paymentDay !== today.getDate()) {
-       nextDate.setMonth(nextDate.getMonth() + 1)
-    }
-    nextPayment = nextDate.getFullYear()+'-'+String(nextDate.getMonth()+1).padStart(2,'0')+'-'+String(nextDate.getDate()).padStart(2,'0')
-    var isOverdue=false
-    var disc=el('div',{style:'margin-bottom:10px;padding:10px 12px;background:'+(!isOverdue?'rgba(99,102,241,.08)':'var(--red-bg)')+';border-radius:var(--rs);display:flex;justify-content:space-between;align-items:center;font-size:13px'},[
-      el('span',{},'📅 Ближайший платёж: '+(nextPayment?fmtD(nextPayment):'—')+(isOverdue?' ⚠️ Просрочен':'')),
-      el('span',{style:'font-weight:600;color:'+(!isOverdue?'var(--accent2)':'var(--red2)')},fmt(mPayment)+' ₽')
-    ])
-  }else{
-    var disc=el('div')
-  }
-
-  var grid=el('div',{className:'stats-grid',style:'grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:0'},[
-    el('div',{className:'stat',style:'padding:12px'},[
-      el('div',{className:'lbl'},'Остаток'),
-      el('div',{className:'val '+(isPaidOff?'g':'r'),style:'font-size:18px'},fmt(remaining)+' ₽')
-    ]),
-    el('div',{className:'stat',style:'padding:12px'},[
-      el('div',{className:'lbl'},'Ставка'),
-      el('div',{className:'val',style:'font-size:18px'},(parseFloat(cr.interest_rate)||0)+'%')
-    ]),
-    el('div',{className:'stat',style:'padding:12px'},[
-      el('div',{className:'lbl'},'Платёж/мес'),
-      el('div',{className:'val',style:'font-size:18px'},fmt(parseFloat(cr.monthly_payment)||0)+' ₽')
-    ]),
-    el('div',{className:'stat',style:'padding:12px'},[
-      el('div',{className:'lbl'},'Окончание'),
-      el('div',{className:'val',style:'font-size:14px'},cr.end_date?fmtD(cr.end_date):'—')
-    ])
-  ])
-
-  var breakdown=el('div',{style:'margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;gap:16px;font-size:11px;color:var(--text3);flex-wrap:wrap'},[
-    el('span',{},'📊 Основной долг: '+fmt(principal)+' ₽'),
-    el('span',{},'💰 Проценты: '+fmt(interest)+' ₽'),
-    el('span',{},'📝 Платежей: '+cr.payment_count)
-  ])
-
-  card.appendChild(header)
-  card.appendChild(progress)
-  if(disc.firstChild)card.appendChild(disc)
-  card.appendChild(grid)
-  card.appendChild(breakdown)
-  return card
-}
-
-function loadCreditsHistory(){
-  var cont=document.getElementById('credits-content')
-  if(!cont)return
-  cont.innerHTML=''
-  api('api/instances/'+curInst.id+'/credit-payments')
-    .then(function(payments){
-      if(!payments.length){
-        cont.appendChild(el('div',{className:'empty'},[
-          el('div',{className:'ic'},'📭'),
-          el('p',{},'Нет платежей')
-        ]))
-        return
-      }
-      var rows=[]
-      for(var i=0;i<payments.length;i++){
-        var p=payments[i]
-        var isEarly=p.payment_type==='early'
-        var typeBadge=isEarly
-          ?el('span',{className:'badge badge-owner',style:'font-size:10px'},'досрочный')
-          :el('span',{className:'badge badge-member',style:'font-size:10px'},'обычный')
-        var strategyLabel=''
-        if(isEarly&&p.early_strategy==='reduce_term')strategyLabel=' 📅'
-        else if(isEarly&&p.early_strategy==='reduce_payment')strategyLabel=' 💳'
-        rows.push(el('tr',{},[
-          el('td',{},fmtD(p.payment_date)),
-          el('td',{},el('span',{style:'color:var(--accent2)'},p.credit_name)),
-          el('td',{className:'amt r'},'-'+fmt(parseFloat(p.amount))+' ₽'+strategyLabel),
-          el('td',{style:'color:var(--text3);font-size:12px'},fmt(parseFloat(p.principal_amount)||0)+' / '+fmt(parseFloat(p.interest_amount)||0)),
-          el('td',{},typeBadge),
-          el('td',{style:'color:var(--text3);font-size:12px'},p.comment||'—'),
-          el('td',{},el('button',{className:'sm danger',onclick:(function(pid,cid){return function(){deletePayment(cid,pid)}})(p.id,p.credit_id)},'✕'))
-        ]))
-      }
-      cont.appendChild(el('table',{},[
-        el('thead',{},el('tr',{},[
-          el('th',{},'Дата'),el('th',{},'Кредит'),el('th',{},'Сумма'),
-          el('th',{},'Долг / %'),el('th',{},'Тип'),el('th',{},'Комментарий'),el('th',{},'')
-        ])),
-        el('tbody',{},rows)
-      ]))
-    })
-    .catch(function(e){cont.innerHTML='<div class="empty"><p>Ошибка: '+e.message+'</p></div>'})
-}
-
-function showCreditForm(cr){
-  var isEdit=!!cr
-  var b=el('div',{},[
-    el('div',{className:'form-grid'},[
-      el('div',{className:'form-group'},[
-        el('label',{},'Название *'),
-        (function(){var i=el('input',{id:'cr-name',placeholder:'Ипотека, Автокредит...'});if(isEdit)i.value=cr.name;return i})()
-      ]),
-      el('div',{className:'form-group'},[
-        el('label',{},'Банк / Кредитор'),
-        (function(){var i=el('input',{id:'cr-lender',placeholder:'Сбербанк, Тинькофф...'});if(isEdit)i.value=cr.lender||'';return i})()
-      ]),
-      el('div',{className:'form-group'},[
-        el('label',{},'Общая сумма (₽) *'),
-        (function(){var i=el('input',{id:'cr-total',type:'number',step:'0.01',placeholder:'1000000'});if(isEdit)i.value=cr.total_amount;return i})()
-      ]),
-      el('div',{className:'form-group'},[
-        el('label',{},'Ставка (% годовых)'),
-        (function(){var i=el('input',{id:'cr-rate',type:'number',step:'0.01',placeholder:'15'});if(isEdit)i.value=cr.interest_rate||'';return i})()
-      ]),
-      el('div',{className:'form-group'},[
-        el('label',{},'Платёж в месяц (₽)'),
-        (function(){var i=el('input',{id:'cr-monthly',type:'number',step:'0.01',placeholder:'25000'});if(isEdit)i.value=cr.monthly_payment||'';return i})()
-      ]),
-      el('div',{className:'form-group'},[
-        el('label',{},'День платежа (1-31)'),
-        (function(){var i=el('input',{id:'cr-payday',type:'number',min:'1',max:'31',placeholder:'15'});if(isEdit)i.value=cr.payment_day||'';return i})()
-      ]),
-      el('div',{className:'form-group'},[
-        el('label',{},'Период (выдача – окончание)'),
-        (function(){
-          var hs=el('input',{id:'cr-start',type:'hidden'})
-          var he=el('input',{id:'cr-end',type:'hidden'})
-          var inp=el('input',{id:'cr-range',type:'text',readonly:'',placeholder:'Кликните — день или период',style:'cursor:pointer'})
-          var pk=dp(inp,{
-            range:true,
-            autoClose:false,
-            onSelect:function(s,dates){
-              if(dates&&dates.length){
-                hs.value=toISO(dates[0])
-                he.value=dates.length>1?toISO(dates[dates.length-1]):''
-                inp.value=he.value?(hs.value+' – '+he.value):hs.value
-                if(dates.length>1)pk.hide()
-              }else{hs.value='';he.value='';inp.value=''}
-            }
-          })
-          if(isEdit&&cr.start_date){
-            if(cr.end_date){pk.selectDate([cr.start_date,cr.end_date]);inp.value=cr.start_date+' – '+cr.end_date}
-            else{pk.selectDate(cr.start_date);inp.value=cr.start_date}
-            hs.value=cr.start_date;he.value=cr.end_date||''
-          }
-          return el('div',{className:'dp-wrap'},[inp,el('button',{className:'dp-reset',type:'button',title:'Сбросить',onclick:function(){pk.clear();inp.value='';hs.value='';he.value=''}},'×')])
-        })()
-      ]),
-      el('div',{className:'form-group'},[
-        el('label',{},'Комментарий'),
-        (function(){var i=el('input',{id:'cr-comment',placeholder:''});if(isEdit)i.value=cr.comment||'';return i})()
-      ])
-    ]),
-    el('div',{className:'form-actions'},[
-      el('button',{className:'primary',onclick:function(){
-        var name=document.getElementById('cr-name').value
-        var total=parseFloat(document.getElementById('cr-total').value)
-        if(!name||!total)return toast('Заполните название и сумму','err')
-        var body={
-          name:name,
-          lender:document.getElementById('cr-lender').value,
-          total_amount:total,
-          interest_rate:parseFloat(document.getElementById('cr-rate').value)||0,
-          monthly_payment:parseFloat(document.getElementById('cr-monthly').value)||0,
-          payment_day:parseInt(document.getElementById('cr-payday').value)||null,
-          start_date:document.getElementById('cr-start').value||null,
-          end_date:document.getElementById('cr-end').value||null,
-          comment:document.getElementById('cr-comment').value
-        }
-        if(isEdit){
-          api('api/instances/'+curInst.id+'/credits/'+cr.id,{method:'PUT',body:JSON.stringify(body)})
-            .then(function(){mclose();toast('Сохранено');loadCredits()})
-            .catch(function(e){toast(e.message,'err')})
-        }else{
-          api('api/instances/'+curInst.id+'/credits',{method:'POST',body:JSON.stringify(body)})
-            .then(function(){mclose();toast('Кредит добавлен');loadCredits()})
-            .catch(function(e){toast(e.message,'err')})
-        }
-      }},isEdit?'Сохранить':'Создать'),
-      el('button',{className:'ghost',onclick:mclose},'Отмена')
-    ])
-  ])
-  modal(isEdit?'Редактировать кредит':'Новый кредит',b)
-}
-
-function showPaymentForm(cr){
-  var isEarly=false
-  var earlyStrategy='reduce_term'
-  var calcDebounce=null
-  var remaining=parseFloat(cr.remaining_amount!=null?cr.remaining_amount:cr.total_amount)
-  var monthlyPayment=parseFloat(cr.monthly_payment)||0
-  var interestRate=parseFloat(cr.interest_rate)||0
-
-  function recalc(){
-    var amt=parseFloat(document.getElementById('pay-amount').value)||0
-    var date=getDateVal('pay-date')
-    var strategy=earlyStrategy
-    if(!isEarly||!amt||amt<=0){
-      var r=document.getElementById('early-result')
-      if(r)r.innerHTML=''
-      return
-    }
-    clearTimeout(calcDebounce)
-    calcDebounce=setTimeout(function(){
-      api('api/instances/'+curInst.id+'/credits/'+cr.id+'/calculate-early?amount='+amt+'&strategy='+strategy+(date?'&payment_date='+date:''))
-        .then(function(res){
-          var r=document.getElementById('early-result')
-          if(!r)return
-          if(res.is_fully_paid){
-            r.innerHTML='<div style="padding:12px;background:var(--green-bg);border-radius:var(--rs);color:var(--green2)">✅ Кредит будет полностью погашен!'+(res.overpayment>0?'<br><small>Переплата: '+fmt(res.overpayment)+' ₽</small>':'')+'</div>'
-            return
-          }
-          if(strategy==='reduce_term'){
-            r.innerHTML='<div style="padding:12px;background:var(--green-bg);border-radius:var(--rs);color:var(--green2)">📅 <b>Уменьшение срока</b><br>Новый остаток: '+fmt(res.new_remaining)+' ₽<br>Срок сократится на <b>'+res.months_saved+' мес.</b>'+(res.interest_saved>0?'<br>Экономия процентов: <b>'+fmt(res.interest_saved)+' ₽</b>':'')+'</div>'
-          }else{
-            r.innerHTML='<div style="padding:12px;background:var(--orange-bg);border-radius:var(--rs);color:var(--orange)">💳 <b>Уменьшение платежа</b><br>Новый остаток: '+fmt(res.new_remaining)+' ₽<br>Новый платёж: <b>'+fmt(res.new_monthly_payment)+' ₽/мес</b>'+(res.payment_reduction>0?'<br>Уменьшение на <b>'+fmt(res.payment_reduction)+' ₽</b>':'')+'</div>'
-          }
-          var principalInp=document.getElementById('pay-principal')
-          if(principalInp&&!principalInp.value)principalInp.value=amt.toFixed(2)
-          var interestInp=document.getElementById('pay-interest')
-          if(interestInp&&!interestInp.value)interestInp.value='0.00'
-        }).catch(function(){})
-    },300)
-  }
-
-  var b=el('div',{},[
-    el('div',{style:'margin-bottom:16px;padding:12px;background:var(--surface2);border-radius:var(--rs)'},[
-      el('div',{style:'font-weight:600;margin-bottom:4px'},cr.name),
-      el('div',{style:'font-size:12px;color:var(--text3)'},'Остаток: '+fmt(remaining)+' ₽ · Платёж: '+fmt(monthlyPayment)+' ₽/мес · Ставка: '+interestRate+'%')
-    ]),
-    el('div',{style:'display:flex;gap:8px;margin-bottom:16px'},[
-      el('button',{className:'sm primary pay-type-btn',id:'pay-type-regular',onclick:function(){
-        isEarly=false
-        document.getElementById('pay-type-regular').className='sm primary pay-type-btn'
-        document.getElementById('pay-type-early').className='sm ghost pay-type-btn'
-        document.getElementById('early-strategy-block').style.display='none'
-        var r=document.getElementById('early-result')
-        if(r)r.innerHTML=''
-      }},'Обычный платёж'),
-      el('button',{className:'sm ghost pay-type-btn',id:'pay-type-early',onclick:function(){
-        isEarly=true
-        document.getElementById('pay-type-early').className='sm primary pay-type-btn'
-        document.getElementById('pay-type-regular').className='sm ghost pay-type-btn'
-        document.getElementById('early-strategy-block').style.display='flex'
-        recalc()
-      }},'Досрочное погашение')
-    ]),
-    el('div',{id:'early-strategy-block',style:'display:none;gap:8px;margin-bottom:12px'},[
-      el('button',{className:'sm primary strategy-btn',id:'strategy-term',onclick:function(){
-        earlyStrategy='reduce_term'
-        document.getElementById('strategy-term').className='sm primary strategy-btn'
-        document.getElementById('strategy-payment').className='sm ghost strategy-btn'
-        recalc()
-      }},'📅 Уменьшить срок'),
-      el('button',{className:'sm ghost strategy-btn',id:'strategy-payment',onclick:function(){
-        earlyStrategy='reduce_payment'
-        document.getElementById('strategy-payment').className='sm primary strategy-btn'
-        document.getElementById('strategy-term').className='sm ghost strategy-btn'
-        recalc()
-      }},'💳 Уменьшить платёж')
-    ]),
-    el('div',{className:'form-grid'},[
-      el('div',{className:'form-group'},[
-        el('label',{},'Сумма платежа (₽) *'),
-        el('input',{id:'pay-amount',type:'number',step:'0.01',placeholder:fmt(monthlyPayment),oninput:recalc})
-      ]),
-      el('div',{className:'form-group'},[
-        el('label',{},'В основной долг (₽)'),
-        el('input',{id:'pay-principal',type:'number',step:'0.01',placeholder:'0'})
-      ]),
-      el('div',{className:'form-group'},[
-        el('label',{},'В проценты (₽)'),
-        el('input',{id:'pay-interest',type:'number',step:'0.01',placeholder:'0'})
-      ]),
-      el('div',{className:'form-group'},[
-        el('label',{},'Дата платежа *'),
-        (function(){
-          var inp=el('input',{id:'pay-date',type:'text',readonly:'',value:new Date().toISOString().slice(0,10),style:'cursor:pointer'})
-          dp(inp,{value:inp.value,onSelect:function(){recalc()}})
-          return inp
-        })()
-      ]),
-      el('div',{className:'form-group'},[
-        el('label',{},'Комментарий'),
-        el('input',{id:'pay-comment',placeholder:''})
-      ])
-    ]),
-    el('div',{id:'early-result',style:'margin-bottom:12px'}),
-    el('div',{style:'display:flex;align-items:center;gap:8px;margin:12px 0'},[
-      el('input',{id:'pay-create-tx',type:'checkbox',className:'form-check',checked:true}),
-      el('label',{for:'pay-create-tx',className:'form-check-lbl'},'Создать транзакцию расхода')
-    ]),
-    el('div',{className:'form-actions'},[
-      el('button',{className:'primary',onclick:function(){
-        var amount=parseFloat(document.getElementById('pay-amount').value)
-        var date=getDateVal('pay-date')
-        if(!amount||!date)return toast('Укажите сумму и дату','err')
-        var principal=parseFloat(document.getElementById('pay-principal').value)||0
-        var interest=parseFloat(document.getElementById('pay-interest').value)||0
-        if(isEarly&&principal===0&&interest===0){principal=amount}
-        var body={
-          amount:amount,
-          principal_amount:principal,
-          interest_amount:interest,
-          payment_date:date,
-          comment:document.getElementById('pay-comment').value,
-          create_transaction:document.getElementById('pay-create-tx').checked,
-          payment_type:isEarly?'early':'regular'
-        }
-        if(isEarly)body.early_strategy=earlyStrategy
-        api('api/instances/'+curInst.id+'/credits/'+cr.id+'/payments',{method:'POST',body:JSON.stringify(body)})
-          .then(function(){mclose();toast(isEarly?'Досрочное погашение внесено':'Платёж внесён');loadCredits();loadDash()})
-          .catch(function(e){toast(e.message,'err')})
-      }},'Внести платёж'),
-      el('button',{className:'ghost',onclick:mclose},'Отмена')
-    ])
-  ])
-  modal('Внести платёж',b)
-}
-
-function deleteCredit(id){
-  confirmModal('Удалить этот кредит и все его платежи?',function(){
-    api('api/instances/'+curInst.id+'/credits/'+id,{method:'DELETE'})
-      .then(function(){toast('Удалено');loadCredits()})
-      .catch(function(e){toast(e.message,'err')})
-  })
-}
-
-function deletePayment(creditId,paymentId){
-  confirmModal('Удалить этот платёж? Остаток долга будет скорректирован.',function(){
-    api('api/instances/'+curInst.id+'/credits/'+creditId+'/payments/'+paymentId,{method:'DELETE'})
-      .then(function(){toast('Удалено');loadCredits()})
-      .catch(function(e){toast(e.message,'err')})
-  })
-}
+// Credits functionality removed
+function loadCredits(){}
 
 function loadShoppingWidget(card){
   var loading=el('div',{style:'text-align:center;padding:16px;color:var(--text3)'},'Загрузка...')
@@ -3443,30 +3071,30 @@ function showImportStatementModal(){
   modal('📥 Импорт банковской выписки', wrap, {centered:true, style:'max-width:460px'})
 }
 
-function showAiAdviceModal(){
-  if(!curInst) return toast('Выберите инстанс','err')
-  var wrap = el('div',{},[
-    el('div',{
-      id:'ai-advice-content',
-      style:'min-height:160px;max-height:68vh;overflow-y:auto;font-size:14px;line-height:1.6;color:var(--text);padding-right:8px'
-    },'⏳ Нейросеть Gemini AI анализирует ваши расходы, накопления и динамику за последние 30 дней...')
-  ])
-  modal('🤖 AI Финансовый советник', wrap, {centered:true, style:'max-width:640px;width:92%'})
+// function showAiAdviceModal(){
+//   if(!curInst) return toast('Выберите инстанс','err')
+//   var wrap = el('div',{},[
+//     el('div',{
+//       id:'ai-advice-content',
+//       style:'min-height:160px;max-height:68vh;overflow-y:auto;font-size:14px;line-height:1.6;color:var(--text);padding-right:8px'
+//     },'⏳ Нейросеть Gemini AI анализирует ваши расходы, накопления и динамику за последние 30 дней...')
+//   ])
+//   modal('🤖 AI Финансовый советник', wrap, {centered:true, style:'max-width:640px;width:92%'})
 
-  api('api/instances/' + curInst.id + '/ai-advice')
-    .then(function(d){
-      var contentEl = document.getElementById('ai-advice-content')
-      if(!contentEl) return
-      var txt = (d.advice || 'Совет не получен')
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\n/g, '<br>')
-      contentEl.innerHTML = txt
-    })
-    .catch(function(e){
-      var contentEl = document.getElementById('ai-advice-content')
-      if(contentEl) contentEl.textContent = 'Ошибка получения совета: ' + e.message
-    })
-}
+//   api('api/instances/' + curInst.id + '/ai-advice')
+//     .then(function(d){
+//       var contentEl = document.getElementById('ai-advice-content')
+//       if(!contentEl) return
+//       var txt = (d.advice || 'Совет не получен')
+//         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+//         .replace(/\n/g, '<br>')
+//       contentEl.innerHTML = txt
+//     })
+//     .catch(function(e){
+//       var contentEl = document.getElementById('ai-advice-content')
+//       if(contentEl) contentEl.textContent = 'Ошибка получения совета: ' + e.message
+//     })
+// }
 
 
 function updateDashGoalsCard(){
@@ -3544,9 +3172,9 @@ function loadDash(){
       el('h1',{},'📊 '+curInst.name),
       el('div',{className:'subtitle'},'Обзор бюджета'),
       el('div',{style:'display:flex;gap:8px;margin-top:12px;flex-wrap:wrap'},[
-        el('button',{className:'btn primary sm',style:'background:linear-gradient(135deg, #6366f1, #8b5cf6);color:#fff',onclick:showAiAdviceModal},'🤖 AI-Советник'),
+        // el('button',{className:'btn primary sm',style:'background:linear-gradient(135deg, #6366f1, #8b5cf6);color:#fff',onclick:showAiAdviceModal},'🤖 AI-Советник'),
         el('button',{className:'btn ghost sm',onclick:showImportStatementModal},'📥 Импорт выписки (XLSX)'),
-        el('a',{href:'api/instances/'+curInst.id+'/calendar.ics',target:'_blank',className:'btn ghost sm',style:'text-decoration:none'},'📅 iCal Календарь')
+        // el('a',{href:'api/instances/'+curInst.id+'/calendar.ics',target:'_blank',className:'btn ghost sm',style:'text-decoration:none'},'📅 iCal Календарь')
       ]),
       el('div',{style:'display:flex;gap:8px;margin-top:12px;flex-wrap:wrap'},periodBtns),
       navRow
@@ -3570,54 +3198,30 @@ function loadDash(){
         else if(d.period.period==='quarter')periodLabel=d.period.quarter+' квартал '+d.period.year
         else periodLabel=d.period.year+' год'
       }
-      p.appendChild(el('div',{className:'card',style:'margin-bottom:16px'},[
-    el('div',{className:'stats-grid nowrap',style:'margin-bottom:0'},[
-          el('div',{className:'stat'},[
-            el('div',{className:'lbl'},'Доходы'),
-            el('div',{className:'val g'},'+'+fmt(s.income.total)+' ₽'),
-            el('div',{className:'sub'},s.income.count+' операций')
+      // Top row: Summary stats card & Monthly chart side-by-side
+      var topRow = el('div', {
+        className: 'dash-top-row',
+        style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:16px;align-items:stretch;'
+      })
+
+      var statsCard = el('div', {className: 'card', style: 'margin-bottom:0;display:flex;flex-direction:column;justify-content:center'}, [
+        el('div', {className: 'stats-grid nowrap', style: 'margin-bottom:0'}, [
+          el('div', {className: 'stat'}, [
+            el('div', {className: 'lbl'}, 'Доходы'),
+            el('div', {className: 'val g'}, '+' + fmt(s.income.total) + ' ₽'),
+            el('div', {className: 'sub'}, s.income.count + ' операций')
           ]),
-          el('div',{className:'stat'},[
-            el('div',{className:'lbl'},'Расходы'),
-            el('div',{className:'val r'},'-'+fmt(s.expense.total)+' ₽'),
-            el('div',{className:'sub'},s.expense.count+' операций')
-          ]),
-          (function(){
-            var balGrid = el('div', {className: 'stat', style: 'padding-bottom:8px'}, [el('div',{className:'lbl'},'Баланс счетов')])
-            var currs = s.balancesByCurrency ? Object.keys(s.balancesByCurrency) : []
-            if(!currs.length) {
-               balGrid.appendChild(el('div',{className:'val '+(s.balance>=0?'g':'r')},(s.balance>=0?'+':'')+fmt(s.balance)+' ₽'))
-            } else {
-               var flex = el('div', {style: 'display:flex; flex-direction:column; gap:4px; margin-top:4px'})
-               for(var i=0; i<currs.length; i++) {
-                 var c = currs[i]
-                 var v = s.balancesByCurrency[c]
-                 flex.appendChild(el('div', {style: 'display:flex; justify-content:space-between; font-size:15px; gap: 12px'}, [
-                   el('span', {style: 'color:var(--text2)'}, c),
-                   el('span', {className: v>=0?'g':'r', style:'font-weight:600'}, (v>0?'+':'')+fmt(v))
-                 ]))
-               }
-               balGrid.appendChild(flex)
-            }
-            return balGrid
-          })(),
-          el('div',{className:'stat'},[
-            el('div',{className:'lbl'},'В накопления'),
-            el('div',{className:'val g'},fmt(s.savingsIn.total)+' ₽'),
-            el('div',{className:'sub'},s.savingsIn.count+' операций')
-          ]),
-          el('div',{className:'stat'},[
-            el('div',{className:'lbl'},'В кредиты'),
-            el('div',{className:'val g'},fmt(s.credits.total)+' ₽'),
-            el('div',{className:'sub'},s.credits.count+' операций')
+          el('div', {className: 'stat'}, [
+            el('div', {className: 'lbl'}, 'Расходы'),
+            el('div', {className: 'val r'}, '-' + fmt(s.expense.total) + ' ₽'),
+            el('div', {className: 'sub'}, s.expense.count + ' операций')
           ])
         ])
-      ]))
+      ])
+      topRow.appendChild(statsCard)
 
-      // Summary stats card is already appended above (first element in dashboard)
-
-      // Monthly chart
-      if(d.byMonth&&d.byMonth.length){
+      // Monthly chart in the same row
+      if(d.byMonth && d.byMonth.length){
         var mm={}
         for(var i=0;i<d.byMonth.length;i++){
           var r=d.byMonth[i]
@@ -3634,8 +3238,8 @@ function loadDash(){
         var bars=[]
         for(var m2=0;m2<months.length;m2++){
           var mo=months[m2]
-          var hInc=Math.round((mo.i/maxV)*150)
-          var hExp=Math.round((mo.e/maxV)*150)
+          var hInc=Math.round((mo.i/maxV)*90)
+          var hExp=Math.round((mo.e/maxV)*90)
           bars.push(el('div',{className:'bar-grp'},[
             el('div',{className:'bar',style:'height:'+hInc+'px;background:var(--green)',title:'Доход: '+fmt(mo.i)+' ₽'},
               el('span',{className:'tip'},'+'+fmt(mo.i))),
@@ -3644,20 +3248,16 @@ function loadDash(){
             el('span',{className:'bar-lbl'},fmtM(mo.m))
           ]))
         }
-        p.appendChild(el('div',{className:'card'},[
-          el('div',{className:'card-title'},'Доходы и расходы по месяцам'),
-          el('div',{className:'chart-wrap'},bars)
-        ]))
+        var chartCard = el('div',{className:'card',style:'margin-bottom:0;display:flex;flex-direction:column;justify-content:space-between'},[
+          el('div',{className:'card-title',style:'margin-bottom:8px'},'Доходы и расходы по месяцам'),
+          el('div',{className:'chart-wrap',style:'height:120px;padding:8px 0 20px;border-bottom:none'},bars)
+        ])
+        topRow.appendChild(chartCard)
+      } else {
+        statsCard.style.gridColumn = '1 / -1'
       }
 
-      // Savings goals — logically placed after main budget summary & charts
-      var dashGoalsCard=el('div',{id:'dash-goals-card',className:'card',style:'margin-bottom:16px'})
-      var dashGoalsHeader=el('div',{className:'card-title'},'🏦 Цели накоплений')
-      dashGoalsCard.appendChild(dashGoalsHeader)
-      var dashGoalsLoading=el('div',{style:'text-align:center;padding:16px;color:var(--text3)',textContent:'Загрузка...'})
-      dashGoalsCard.appendChild(dashGoalsLoading)
-      p.appendChild(dashGoalsCard)
-      updateDashGoalsCard()
+      p.appendChild(topRow)
 
       // Shopping list widget — utility block below goals
       var shoppingCard=el('div',{className:'card',style:'margin-bottom:16px'})
@@ -4454,8 +4054,7 @@ function showTxForm(tx,prefill){
         (function(){
           var sel=el('select',{id:'tx-type',onchange:function(){switchType(this.value)}},[
             el('option',{value:'expense'},'Расход'),
-            el('option',{value:'income'},'Доход'),
-            el('option',{value:'savings'},'Накопления')
+            el('option',{value:'income'},'Доход')
           ])
           sel.value=curType
           return sel
@@ -4558,9 +4157,6 @@ function showTxForm(tx,prefill){
     ]),
     el('div',{id:'income-block',style:'display:none'},[
       buildIncomeRow()
-    ]),
-    el('div',{id:'savings-block',style:'display:none'},[
-      buildSavingsRow()
     ]),
     el('div',{className:'form-actions'},[
       el('button',{className:'primary',onclick:function(){

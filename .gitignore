@@ -1,3 +1,30 @@
+# Dependencies
 node_modules/
+
+# Environment variables & secrets
 .env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# SSL & Keys
+*.pem
+*.key
+*.crt
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.socraticodeignore
+
+# Backups & temporary
 *.bak*
+*.tmp
