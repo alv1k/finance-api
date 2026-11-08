@@ -524,7 +524,7 @@ app.post('/api/auth/email/request-code', emailCodeIpLimiter, async (req, res) =>
   }
 })
 
-app.post('/api/auth/email/verify-and-sync', verifySyncIpLimiter, async (req, res) => {
+app.post('/api/auth/email/verify-and-sync', verifySyncIpLimiter, optionalAuthMiddleware, async (req, res) => {
   try {
     const rawEmail = String(req.body.email || '').trim().toLowerCase()
     const code = String(req.body.code || '').trim()
@@ -571,19 +571,31 @@ app.post('/api/auth/email/verify-and-sync', verifySyncIpLimiter, async (req, res
     let isNewUser = false
 
     if (!user) {
-      const baseName = rawEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20) || 'user'
-      let username = baseName
-      const existingU = await pool.query('SELECT 1 FROM users WHERE username = $1', [username])
-      if (existingU.rows.length) {
-        username = `${baseName}_${crypto.randomInt(1000, 9999)}`
+      if (req.user && req.user.id && !req.user.is_demo) {
+        // Link email to current authenticated user
+        const targetFreq = ['weekly', 'monthly'].includes(backupFrequency) ? backupFrequency : 'weekly'
+        await pool.query('UPDATE users SET email = $1, backup_frequency = $2 WHERE id = $3', [
+          rawEmail,
+          targetFreq,
+          req.user.id
+        ])
+        const { rows: updatedRows } = await pool.query('SELECT id, username, email, is_admin, plan, backup_frequency FROM users WHERE id = $1', [req.user.id])
+        user = updatedRows[0]
+      } else {
+        const baseName = rawEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20) || 'user'
+        let username = baseName
+        const existingU = await pool.query('SELECT 1 FROM users WHERE username = $1', [username])
+        if (existingU.rows.length) {
+          username = `${baseName}_${crypto.randomInt(1000, 9999)}`
+        }
+        const dummyPw = await hashPassword(crypto.randomBytes(16).toString('hex'))
+        const ins = await pool.query(
+          'INSERT INTO users (username, password, email, backup_frequency) VALUES ($1, $2, $3, $4) RETURNING id, username, email, is_admin, plan',
+          [username, dummyPw, rawEmail, ['weekly', 'monthly'].includes(backupFrequency) ? backupFrequency : 'none']
+        )
+        user = ins.rows[0]
+        isNewUser = true
       }
-      const dummyPw = await hashPassword(crypto.randomBytes(16).toString('hex'))
-      const ins = await pool.query(
-        'INSERT INTO users (username, password, email, backup_frequency) VALUES ($1, $2, $3, $4) RETURNING id, username, email, is_admin, plan',
-        [username, dummyPw, rawEmail, ['weekly', 'monthly'].includes(backupFrequency) ? backupFrequency : 'none']
-      )
-      user = ins.rows[0]
-      isNewUser = true
     } else if (backupFrequency && ['weekly', 'monthly', 'none'].includes(backupFrequency)) {
       await pool.query('UPDATE users SET backup_frequency = $1 WHERE id = $2', [backupFrequency, user.id])
       user.backup_frequency = backupFrequency
@@ -1148,7 +1160,7 @@ app.post('/api/instances/:instanceId/upload-receipt', authMiddleware, instanceMi
         'X-Internal-Key': internalKey,
         'X-Service-ID': 'finance-api'
       },
-      body: JSON.stringify({ file_name: fileName })
+      body: JSON.stringify({ file_name: req.file.filename })
     })
 
     const ocrData = await ocrResponse.json()

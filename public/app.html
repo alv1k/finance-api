@@ -1483,7 +1483,8 @@ function renderMobileDrawer(){
   var navItems=[
     {id:'dashboard',icon:'📊',label:'Дашборд'},
     {id:'transactions',icon:'💳',label:'Транзакции'},
-    {id:'instances',icon:'👥',label:'Инстансы'}
+    {id:'instances',icon:'👥',label:'Инстансы'},
+    {id:'profile',icon:'⚙️',label:'Профиль и бэкап'}
   ]
   for(var n=0;n<navItems.length;n++){
     var ni=navItems[n]
@@ -1504,10 +1505,10 @@ function renderMobileDrawer(){
   var avatarLetter=user&&user.username?user.username.charAt(0).toUpperCase():'?'
   var planBadgeTextMob = (user && user.plan_info && user.plan_info.badge) ? user.plan_info.badge : (isLocalMode ? '📁 Локальный' : '🆓 Free')
   drawer.appendChild(el('div',{className:'user-info'},[
-    el('div',{className:'avatar'},avatarLetter),
-    el('div',{className:'name',style:'display:flex;flex-direction:column;gap:2px'},[
+    el('div',{className:'avatar',style:'cursor:pointer',title:'Профиль и бэкапы',onclick:function(){closeMobileDrawer();showProfileModal()}},avatarLetter),
+    el('div',{className:'name',style:'display:flex;flex-direction:column;gap:2px;cursor:pointer',title:'Профиль и бэкапы',onclick:function(){closeMobileDrawer();showProfileModal()}},[
       el('span',{style:'font-weight:600'},user?(user.is_demo ? 'Гость #'+(user.demo?user.demo.slot:'') : user.username):''),
-      el('span',{style:'font-size:10px;color:var(--accent2);cursor:pointer',onclick:function(){closeMobileDrawer();showPlanModal()}},planBadgeTextMob)
+      el('span',{style:'font-size:10px;color:var(--accent2);cursor:pointer',onclick:function(e){e.stopPropagation();closeMobileDrawer();showPlanModal()}},planBadgeTextMob)
     ]),
     createLogoutBtn(function(e){if(e)e.preventDefault();closeMobileDrawer();logout()})
   ]))
@@ -1571,7 +1572,8 @@ function renderSidebar(){
   var navItems=[
     {id:'dashboard',icon:'📊',label:'Дашборд'},
     {id:'transactions',icon:'💳',label:'Транзакции'},
-    {id:'instances',icon:'👥',label:'Инстансы'}
+    {id:'instances',icon:'👥',label:'Инстансы'},
+    {id:'profile',icon:'⚙️',label:'Профиль и бэкап'}
   ]
   for(var n=0;n<navItems.length;n++){
     var ni=navItems[n]
@@ -1606,10 +1608,10 @@ function renderSidebar(){
   var avatarLetter=user&&user.username?user.username.charAt(0).toUpperCase():'?'
   var planBadgeText = (user && user.plan_info && user.plan_info.badge) ? user.plan_info.badge : (isLocalMode ? '📁 Локальный' : '🆓 Free')
   s.appendChild(el('div',{className:'user-info'},[
-    el('div',{className:'avatar'},avatarLetter),
-    el('div',{className:'name',style:'display:flex;flex-direction:column;gap:2px'},[
+    el('div',{className:'avatar',style:'cursor:pointer',title:'Профиль и бэкапы',onclick:showProfileModal},avatarLetter),
+    el('div',{className:'name',style:'display:flex;flex-direction:column;gap:2px;cursor:pointer',title:'Профиль и бэкапы',onclick:showProfileModal},[
       el('span',{style:'font-weight:600'},user?(user.is_demo ? 'Гость #'+(user.demo?user.demo.slot:'') : user.username):''),
-      el('span',{style:'font-size:10px;color:var(--accent2);cursor:pointer',onclick:showPlanModal},planBadgeText)
+      el('span',{style:'font-size:10px;color:var(--accent2);cursor:pointer',onclick:function(e){e.stopPropagation();showPlanModal()}},planBadgeText)
     ]),
     createLogoutBtn(function(e){if(e)e.preventDefault();logout()})
   ]))
@@ -1618,8 +1620,12 @@ function renderSidebar(){
 }
 
 
-var pageTitles={dashboard:'Дашборд',transactions:'Транзакции',accounts:'Счета',instances:'Инстансы'}
+var pageTitles={dashboard:'Дашборд',transactions:'Транзакции',accounts:'Счета',instances:'Инстансы',profile:'Профиль'}
 function nav(p){
+  if(p==='profile'){
+    showProfileModal()
+    return
+  }
   curPage=p
   var items=document.querySelectorAll('.nav-item')
   for(var i=0;i<items.length;i++){
@@ -4466,6 +4472,121 @@ function showPlanModal(){
     modal('Ваш тарифный план', body)
   }).catch(function(err){
     toast(err.message,'err')
+  })
+}
+
+function showProfileModal(){
+  if(isLocalMode){
+    showSaveToServerModal(false)
+    return
+  }
+  mclose()
+  var wrap = el('div',{})
+  wrap.appendChild(el('div',{style:'text-align:center;padding:24px;color:var(--text2)'},'Загрузка настроек...'))
+  modal('👤 Профиль и Резервные копии', wrap, {centered:true, style:'max-width:460px'})
+
+  api('api/user/backup/settings').then(function(settings){
+    wrap.innerHTML = ''
+    var curEmail = settings.email || ''
+    var curFreq = settings.backup_frequency || 'none'
+    var lastBackup = settings.last_backup_at
+
+    var userBlock = el('div',{style:'display:flex;align-items:center;gap:12px;margin-bottom:18px;padding:12px 14px;background:var(--surface2);border-radius:var(--rs);border:1px solid var(--border)'},[
+      el('div',{className:'avatar',style:'width:42px;height:42px;font-size:18px;display:flex;align-items:center;justify-content:center'},(user&&user.username?user.username.charAt(0).toUpperCase():'U')),
+      el('div',{style:'flex:1'},[
+        el('div',{style:'font-weight:700;font-size:15px;color:var(--text)'}, user ? user.username : 'Пользователь'),
+        el('div',{style:'font-size:12px;color:var(--accent2);margin-top:2px'}, (user && user.plan_info ? user.plan_info.badge : 'Free') + ' план' + (curInst ? ' • ' + curInst.name : ''))
+      ])
+    ])
+    wrap.appendChild(userBlock)
+
+    var emailInput = el('input',{
+      type: 'email',
+      value: curEmail,
+      placeholder: 'name@example.com',
+      style: 'margin-bottom:12px'
+    })
+
+    var freqSelect = el('select',{style:'margin-bottom:14px'},[
+      el('option',{value:'weekly',selected:curFreq==='weekly'},'Еженедельно (каждые 7 дней)'),
+      el('option',{value:'monthly',selected:curFreq==='monthly'},'Ежемесячно (каждые 30 дней)'),
+      el('option',{value:'none',selected:curFreq==='none'},'Отключено (не отправлять авто-бэкапы)')
+    ])
+
+    var lastBackupText = lastBackup ? new Date(lastBackup).toLocaleString('ru-RU') : 'ещё не отправлялась'
+    var lastBackupSpan = el('span',{},lastBackupText)
+    var statusInfo = el('div',{style:'font-size:12px;color:var(--text2);margin-bottom:16px;padding:10px 12px;background:rgba(99,102,241,0.08);border-radius:var(--rs);border:1px solid rgba(99,102,241,0.2)'},[
+      el('div',{style:'margin-bottom:4px'},[
+        el('strong',{},'Последняя выгрузка: '),
+        lastBackupSpan
+      ]),
+      el('div',{},'Выгрузка формируется в Excel (.xlsx) со всеми транзакциями, категориями и целями.')
+    ])
+
+    var btnSave = el('button',{
+      className: 'primary',
+      style: 'width:100%;margin-bottom:10px;font-weight:600',
+      onclick: function(){
+        var newMail = emailInput.value.trim().toLowerCase()
+        var newFreq = freqSelect.value
+        btnSave.disabled = true
+        btnSave.textContent = 'Сохранение...'
+        api('api/user/backup/settings', {
+          method: 'POST',
+          body: JSON.stringify({ email: newMail, backup_frequency: newFreq })
+        }).then(function(d){
+          btnSave.disabled = false
+          btnSave.textContent = '💾 Сохранить настройки'
+          toast('Настройки профиля сохранены', 'ok')
+          if(user) user.email = d.email
+        }).catch(function(e){
+          btnSave.disabled = false
+          btnSave.textContent = '💾 Сохранить настройки'
+          toast(e.message, 'err')
+        })
+      }
+    }, '💾 Сохранить настройки')
+
+    var btnTrigger = el('button',{
+      className: 'ghost',
+      style: 'width:100%;font-weight:600;border:1px solid var(--accent);color:var(--accent2)',
+      onclick: function(){
+        var targetMail = emailInput.value.trim().toLowerCase()
+        if(!targetMail){
+          return toast('Укажите Email для отправки копии', 'err')
+        }
+        btnTrigger.disabled = true
+        btnTrigger.textContent = '⏳ Формирование и отправка...'
+        api('api/user/backup/trigger', {
+          method: 'POST',
+          body: JSON.stringify({ email: targetMail })
+        }).then(function(res){
+          btnTrigger.disabled = false
+          btnTrigger.textContent = '📥 Отправить выгрузку на Email сейчас'
+          toast(res.message || 'Резервная копия отправлена на почту!', 'ok')
+          lastBackupSpan.textContent = new Date().toLocaleString('ru-RU')
+        }).catch(function(e){
+          btnTrigger.disabled = false
+          btnTrigger.textContent = '📥 Отправить выгрузку на Email сейчас'
+          toast(e.message, 'err')
+        })
+      }
+    }, '📥 Отправить выгрузку на Email сейчас')
+
+    wrap.appendChild(el('div',{className:'form-group'},[
+      el('label',{},'Email для резервных копий:'),
+      emailInput
+    ]))
+    wrap.appendChild(el('div',{className:'form-group'},[
+      el('label',{},'Частота автоматической отправки:'),
+      freqSelect
+    ]))
+    wrap.appendChild(statusInfo)
+    wrap.appendChild(btnSave)
+    wrap.appendChild(btnTrigger)
+  }).catch(function(err){
+    wrap.innerHTML = ''
+    wrap.appendChild(el('p',{style:'color:var(--red2);padding:14px'},'Ошибка загрузки настроек: '+err.message))
   })
 }
 
