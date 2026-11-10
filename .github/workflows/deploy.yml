@@ -1,0 +1,37 @@
+name: Deploy Finance API to VPS
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy & Rebuild Docker on VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /home/alvik/finance-api
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Build and restart API container
+            docker compose up -d --build api
+
+            # Run migrations
+            docker compose exec -T api npm run migrate || true
+
+            # Verify health
+            sleep 3
+            curl -sf http://127.0.0.1:3000/api/health > /dev/null && echo "finance-api is healthy and active"
